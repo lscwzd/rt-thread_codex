@@ -66,6 +66,29 @@
 #ifndef __RT_DEF_H__
 #define __RT_DEF_H__
 
+/**
+ * @file rtdef.h
+ * @brief Core configuration-independent data model shared by the RT-Thread kernel.
+ *
+ * This header is the central description of the objects manipulated by the
+ * kernel.  It contains version encoding, initialization-export metadata,
+ * object class identifiers, timer and thread control blocks, IPC objects,
+ * memory-manager metadata, and the base device object.  Public operations on
+ * these types are declared in rtthread.h; scheduler-private fields are injected
+ * through rtsched.h; fixed-width and intrusive-list types come from rttypes.h.
+ *
+ * Most structures in this file implement C-style inheritance: the first field
+ * of a derived object is its parent object.  For example, rt_thread starts with
+ * rt_object, while rt_semaphore starts with rt_ipc_object, which itself starts
+ * with rt_object.  This layout lets generic object-management code safely cast
+ * a derived object to its base type.
+ *
+ * Many fields are conditionally compiled.  Their presence, and therefore the
+ * binary layout of the structures, depends on the target BSP's rtconfig.h.
+ * Kernel objects must never be exchanged between binaries built with different
+ * configurations.
+ */
+
 #include "rtsched.h"
 #include "rttypes.h"
 
@@ -81,7 +104,13 @@ extern "C" {
 
 /**@{*/
 
-/* RT-Thread version information */
+/*
+ * RT-Thread version information.
+ *
+ * RT_VERSION_CHECK() maps a semantic version X.Y.Z to X * 10000 + Y * 100 + Z.
+ * The monotonic integer is intended for preprocessor comparisons; it is not a
+ * packed bit field and must not be decoded with shifts or masks.
+ */
 #define RT_VERSION_MAJOR                5               /**< Major version number (X.x.x) */
 #define RT_VERSION_MINOR                3               /**< Minor version number (x.X.x) */
 #define RT_VERSION_PATCH                0               /**< Patch version number (x.x.X) */
@@ -94,7 +123,11 @@ extern "C" {
 
 /**@}*/
 
-/* maximum value of base type */
+/*
+ * Maximum values used by ABI-visible counters.  A libc-enabled build reuses
+ * the standard integer limits; a freestanding build provides equivalent
+ * constants without depending on <stdint.h> limit macros.
+ */
 #ifdef RT_USING_LIBC
 #define RT_UINT8_MAX                    UINT8_MAX       /**< Maximum number of UINT8 */
 #define RT_UINT16_MAX                   UINT16_MAX      /**< Maximum number of UINT16 */
@@ -109,34 +142,64 @@ extern "C" {
 
 #define RT_TICK_MAX                     RT_UINT32_MAX   /**< Maximum number of tick */
 
-/* maximum value of ipc type */
+/*
+ * Public bounds for IPC counters.  Most correspond to the current field width;
+ * RT_MUTEX_VALUE_MAX is retained as a compatibility constant even though the
+ * current mutex control block has no `value` field and uses `hold` instead.
+ * Runtime APIs may impose stricter limits.
+ */
 #define RT_SEM_VALUE_MAX                RT_UINT16_MAX   /**< Maximum number of semaphore .value */
-#define RT_MUTEX_VALUE_MAX              RT_UINT16_MAX   /**< Maximum number of mutex .value */
+#define RT_MUTEX_VALUE_MAX              RT_UINT16_MAX   /**< Legacy mutex-value compatibility bound. */
 #define RT_MUTEX_HOLD_MAX               RT_UINT8_MAX    /**< Maximum number of mutex .hold */
 #define RT_MB_ENTRY_MAX                 RT_UINT16_MAX   /**< Maximum number of mailbox .entry */
 #define RT_MQ_ENTRY_MAX                 RT_UINT16_MAX   /**< Maximum number of message queue .entry */
 
-/* Common Utilities */
+/* Common utilities. */
 
+/** Explicitly mark an expression as intentionally unused without evaluating it twice. */
 #define RT_UNUSED(x)                   ((void)(x))
 
-/* compile time assertion */
+/**
+ * Compile-time assertion usable by pre-C11 compilers.
+ *
+ * A false expression creates an array with a negative bound and therefore a
+ * compilation error.  @p name becomes part of the generated typedef so each
+ * assertion in one scope must use a unique identifier.
+ */
 #define RT_STATIC_ASSERT(name, expn) typedef char _static_assert_##name[(expn)?1:-1]
 
 /* Compiler Related Definitions */
 #include "rtcompiler.h"
 
-/* initialization export */
+/**
+ * @name Automatic initialization export
+ *
+ * INIT_EXPORT() places a function pointer, and optionally diagnostic metadata,
+ * into a linker section whose suffix is the textual @p level.  The linker
+ * script keeps and sorts the .rti_fn.* sections.  Startup code then walks the
+ * resulting range in lexical level order.
+ *
+ * An exported initializer has signature `int fn(void)`.  Board-level entries
+ * run before the scheduler starts; the remaining component levels normally run
+ * from the main initialization thread.  The macros expand to nothing when
+ * RT_USING_COMPONENTS_INIT is disabled, so exporting a function does not by
+ * itself guarantee that it is present in a particular firmware image.
+ *
+ * MSVC cannot use the same ELF-style section attributes as GCC-compatible
+ * compilers, so it stores an explicit level string in a common section.  With
+ * RT_DEBUGING_AUTO_INIT, the function name is also retained for diagnostics.
+ * @{ */
 #ifdef RT_USING_COMPONENTS_INIT
+/** Prototype required for every automatically exported initializer. */
 typedef int (*init_fn_t)(void);
 #ifdef _MSC_VER
 #pragma section("rti_fn$f",read)
     #ifdef RT_DEBUGING_AUTO_INIT
         struct rt_init_desc
         {
-            const char* level;
-            const init_fn_t fn;
-            const char* fn_name;
+            const char* level;       /**< Textual ordering key, for example ".rti_fn.3". */
+            const init_fn_t fn;      /**< Initializer to invoke. */
+            const char* fn_name;     /**< Function name retained for startup diagnostics. */
         };
         #define INIT_EXPORT(fn, level)                                  \
                                 const char __rti_level_##fn[] = ".rti_fn." level;       \
@@ -147,8 +210,8 @@ typedef int (*init_fn_t)(void);
     #else
         struct rt_init_desc
         {
-            const char* level;
-            const init_fn_t fn;
+            const char* level;       /**< Textual ordering key used by the MSVC startup walker. */
+            const init_fn_t fn;      /**< Initializer to invoke. */
         };
         #define INIT_EXPORT(fn, level)                                  \
                                 const char __rti_level_##fn[] = ".rti_fn." level;       \
@@ -160,8 +223,8 @@ typedef int (*init_fn_t)(void);
     #ifdef RT_DEBUGING_AUTO_INIT
         struct rt_init_desc
         {
-            const char* fn_name;
-            const init_fn_t fn;
+            const char* fn_name;     /**< Function name retained for startup diagnostics. */
+            const init_fn_t fn;      /**< Initializer placed in this descriptor's linker section. */
         };
         #define INIT_EXPORT(fn, level)                                                       \
             const char __rti_##fn##_name[] = #fn;                                            \
@@ -176,32 +239,36 @@ typedef int (*init_fn_t)(void);
 #define INIT_EXPORT(fn, level)
 #endif /* RT_USING_COMPONENTS_INIT */
 
-/* board init routines will be called in board_init() function */
+/* Board-stage routines are called by rt_components_board_init(). */
 #define INIT_BOARD_EXPORT(fn)           INIT_EXPORT(fn, "1")
 
-/* init cpu, memory, interrupt-controller, bus... */
+/* Core facilities: CPU, memory, interrupt controller, and fundamental buses. */
 #define INIT_CORE_EXPORT(fn)            INIT_EXPORT(fn, "1.0")
-/* init sys-timer, clk, pinctrl... */
+/* Subsystems required by later drivers: system timer, clocks, and pin control. */
 #define INIT_SUBSYS_EXPORT(fn)          INIT_EXPORT(fn, "1.1")
-/* init platform, user code... */
+/* Platform-specific services and other late board-stage code. */
 #define INIT_PLATFORM_EXPORT(fn)        INIT_EXPORT(fn, "1.2")
 
-/* pre/device/component/env/app init routines will be called in init_thread */
-/* components pre-initialization (pure software initialization) */
+/* The following levels normally run in main_thread_entry(). */
+/* Pure-software preparation that does not require initialized devices. */
 #define INIT_PREV_EXPORT(fn)            INIT_EXPORT(fn, "2")
-/* device initialization */
+/* Device registration and hardware-driver initialization. */
 #define INIT_DEVICE_EXPORT(fn)          INIT_EXPORT(fn, "3")
-/* components initialization (dfs, lwip, ...) */
+/* Middleware such as DFS and protocol stacks. */
 #define INIT_COMPONENT_EXPORT(fn)       INIT_EXPORT(fn, "4")
-/* environment initialization (mount disk, ...) */
+/* Runtime environment setup, for example mounting storage. */
 #define INIT_ENV_EXPORT(fn)             INIT_EXPORT(fn, "5")
-/* application initialization (rtgui application etc ...) */
+/* Application services that depend on the environment. */
 #define INIT_APP_EXPORT(fn)             INIT_EXPORT(fn, "6")
 
-/* init after mount fs */
+/* Initialization that specifically requires a mounted file system. */
 #define INIT_FS_EXPORT(fn)              INIT_EXPORT(fn, "6.0")
-/* init in secondary_cpu_c_start */
+/*
+ * Per-secondary-CPU initialization walked by rt_dm_secondary_cpu_init(); the
+ * BSP/architecture secondary-startup path decides when to invoke that walker.
+ */
 #define INIT_SECONDARY_CPU_EXPORT(fn)   INIT_EXPORT(fn, "7")
+/** @} */
 
 #if !defined(RT_USING_FINSH)
 /* define these to empty, even if not include finsh.h file */
@@ -214,15 +281,22 @@ typedef int (*init_fn_t)(void);
 #define FINSH_FUNCTION_EXPORT_CMD(name, cmd, desc)
 #endif
 
-/* event length */
+/** Number of event bits carried by an rt_event object. */
 #define RT_EVENT_LENGTH                 32
 
-/* memory management option */
+/*
+ * Default page geometry shared by the slab allocator and virtual-memory/MMU
+ * components.  The mask and shift assume 4096 bytes == 1 << 12.
+ */
 #define RT_MM_PAGE_SIZE                 4096
 #define RT_MM_PAGE_MASK                 (RT_MM_PAGE_SIZE - 1)
 #define RT_MM_PAGE_BITS                 12
 
-/* kernel malloc definitions */
+/*
+ * Allocation indirection used by kernel object creation.  A port or protected
+ * build may override these macros before including this file to route kernel
+ * metadata to a dedicated allocator.  The default uses the system heap API.
+ */
 #ifndef RT_KERNEL_MALLOC
 #define RT_KERNEL_MALLOC(sz)            rt_malloc(sz)
 #endif /* RT_KERNEL_MALLOC */
@@ -243,6 +317,9 @@ typedef int (*init_fn_t)(void);
  *     RT_IS_ALIGN(128, 4) is judging whether 128 aligns with 4.
  *     The result is 1, which means 128 aligns with 4.
  * @note If the address is NULL, false(0) will be returned
+ * @note @p align must be a nonzero power of two.  @p addr may be evaluated
+ *       twice (the second test can be short-circuited), so pass a
+ *       side-effect-free integer/pointer-width expression.
  */
 #define RT_IS_ALIGN(addr, align) ((!(addr & (align - 1))) && (addr != RT_NULL))
 
@@ -253,6 +330,9 @@ typedef int (*init_fn_t)(void);
  * Return the most contiguous size aligned at specified width. RT_ALIGN(13, 4)
  * would return 16.
  * @note align Must be an integer power of 2 or the result will be incorrect
+ * @note @p align is expanded more than once; do not pass an expression with
+ *       increments, function calls, or other side effects.  Addition can wrap
+ *       if @p size is too close to the maximum representable value.
  */
 #define RT_ALIGN(size, align)           (((size) + (align) - 1) & ~((align) - 1))
 
@@ -263,6 +343,7 @@ typedef int (*init_fn_t)(void);
  * Return the down number of aligned at specified width. RT_ALIGN_DOWN(13, 4)
  * would return 12.
  * @note align Must be an integer power of 2 or the result will be incorrect
+ * @note Use side-effect-free arguments; no run-time validation is performed.
  */
 #define RT_ALIGN_DOWN(size, align)      ((size) & ~((align) - 1))
 
@@ -271,48 +352,70 @@ typedef int (*init_fn_t)(void);
  * @{
  */
 
-/*
- * kernel object macros
- */
+/* Kernel object flags occupy the rt_object::flag byte. */
 #define RT_OBJECT_FLAG_MODULE           0x80            /**< is module object. */
 
 /**
- * Base structure of Kernel object
+ * @brief Common header embedded at offset zero in every managed kernel object.
+ *
+ * The object manager normally links an initialized instance into the class
+ * container selected by @ref rt_object_class_type.  Under RT_USING_MODULE, an
+ * object created by the current loadable module is linked to that module's
+ * private object list instead.  The generic rt_object_init() path sets
+ * RT_Object_Class_Static in the high bit of `type` and pairs with detach;
+ * rt_object_allocate() leaves it clear and pairs with delete.  This attribute
+ * identifies the object initialization/lifetime path, not necessarily the
+ * backing storage's physical origin, because class wrappers can define their
+ * own allocation/destroy sequence.  Code that changes `type` or `list` directly
+ * can corrupt registry or lifetime state and must use object/class APIs.
  */
 struct rt_object
 {
 #if RT_NAME_MAX > 0
-    char        name[RT_NAME_MAX];                       /**< dynamic name of kernel object */
+    char        name[RT_NAME_MAX];                       /**< NUL-terminated name stored inline; long input is truncated. */
 #else
-    const char *name;                                    /**< static name of kernel object */
+    const char *name;                                    /**< Borrowed name pointer; storage must outlive the object. */
 #endif /* RT_NAME_MAX > 0 */
-    rt_uint8_t  type;                                    /**< type of kernel object */
-    rt_uint8_t  flag;                                    /**< flag of kernel object */
+    rt_uint8_t  type;                                    /**< Class value plus the static-object ownership bit. */
+    rt_uint8_t  flag;                                    /**< Class-specific flags; the module bit is globally reserved. */
 
 #ifdef RT_USING_MODULE
-    void      * module_id;                               /**< id of application module */
+    void      * module_id;                               /**< Owning loadable module, used to reclaim module resources. */
 #endif /* RT_USING_MODULE */
 
 #ifdef RT_USING_SMART
-    rt_atomic_t lwp_ref_count;                           /**< ref count for lwp */
+    rt_atomic_t lwp_ref_count;                           /**< Atomic references held on behalf of RT-Smart LWPs. */
 #endif /* RT_USING_SMART */
 
-    rt_list_t   list;                                    /**< list node of kernel object */
+    rt_list_t   list;                                    /**< Node in a class-global or module-private object list. */
 };
 typedef struct rt_object *rt_object_t;                   /**< Type for kernel objects. */
 
 /**
- * iterator of rt_object_for_each()
+ * @brief Visitor callback used by rt_object_for_each().
  *
- * data is the data passing in to rt_object_for_each(). iterator can return
- * RT_EOK to continue the iteration; or any positive value to break the loop
- * successfully; or any negative errno to break the loop on failure.
+ * @param object Current object in the selected class container.
+ * @param data Opaque caller context passed through by rt_object_for_each().
+ * @return RT_EOK to continue; a positive value to stop successfully; or a
+ *         negative RT-Thread error to stop and report failure.
+ *
+ * rt_object_for_each() invokes the callback while holding the selected class
+ * registry spinlock.  The callback must stay bounded, must not block, and must
+ * not call an object API that takes the same registry lock or changes the
+ * current object's registry membership.
  */
 typedef rt_err_t (*rt_object_iter_t)(rt_object_t object, void *data);
 
 /**
- *  The object type can be one of the follows with specific
- *  macros enabled:
+ * @brief Runtime class tag stored in rt_object::type.
+ *
+ * The low seven bits select the logical object class.  The value
+ * RT_Object_Class_Static is an ownership attribute ORed into the class value,
+ * not an independent object class; callers should mask or use the object APIs
+ * when testing a class.  Some enumerators are meaningful only when their
+ * corresponding feature is compiled in.
+ *
+ * The object type can be one of the following with specific macros enabled:
  *  - Thread
  *  - Semaphore
  *  - Mutex
@@ -323,9 +426,9 @@ typedef rt_err_t (*rt_object_iter_t)(rt_object_t object, void *data);
  *  - MemPool
  *  - Device
  *  - Timer
- *  - Module
+ *  - Module, Memory, Channel, ProcessGroup, Session, or Custom
  *  - Unknown
- *  - Static
+ *  - Static ownership attribute (not an independent logical class)
  */
 enum rt_object_class_type
 {
@@ -351,18 +454,32 @@ enum rt_object_class_type
 };
 
 /**
- * The information of the kernel object
+ * @brief Per-class registry used internally by the generic object manager.
+ *
+ * There is one descriptor for each enabled class.  object_list is the sentinel
+ * of globally registered instances (objects owned by a loadable module may be
+ * kept on its private list instead), object_size is the allocation size for
+ * dynamic objects, and spinlock serializes global-registry mutation/traversal.
  */
 struct rt_object_information
 {
-    enum rt_object_class_type type;                     /**< object class type */
-    rt_list_t                 object_list;              /**< object list */
-    rt_size_t                 object_size;              /**< object size */
-    struct rt_spinlock        spinlock;
+    enum rt_object_class_type type;                     /**< Class represented by this registry. */
+    rt_list_t                 object_list;              /**< Sentinel of globally registered objects of this class. */
+    rt_size_t                 object_size;              /**< Bytes allocated by rt_object_allocate(). */
+    struct rt_spinlock        spinlock;                 /**< Protects object_list and registry operations. */
 };
 
 /**
- * The hook function call macro
+ * @brief Invoke a single function-pointer hook when hook support is enabled.
+ *
+ * @param func Hook variable, not a function name that is guaranteed to exist.
+ * @param argv Parenthesized argument tuple, for example `(thread)`.
+ *
+ * The double macro layer allows @p func to be expanded before dispatch.
+ * RT_HOOK_USING_FUNC_PTR selects the legacy single-listener implementation;
+ * otherwise the call is compiled out and a hook-list point may be used.  Hook
+ * code executes synchronously in the caller's context, which may be an ISR or
+ * a scheduler-locked region, and must obey that call site's restrictions.
  */
 #ifndef RT_USING_HOOK
 #define RT_OBJECT_HOOK_CALL(func, argv)
@@ -372,10 +489,10 @@ struct rt_object_information
 /**
  * @brief Add hook point in the routines
  * @note Usage:
- * void foo() {
+ * void foo(void *arg) {
  *     do_something();
  *
- *     RT_OBJECT_HOOK_CALL(foo);
+ *     RT_OBJECT_HOOK_CALL(foo_hook, (arg));
  *
  *     do_other_things();
  * }
@@ -393,7 +510,14 @@ struct rt_object_information
 #ifdef RT_USING_HOOKLIST
 
 /**
- * @brief Add declaration for hook list types.
+ * @brief Declare the types and registration API for a multi-listener hook.
+ *
+ * The generated node contains the typed handler and an intrusive list node.
+ * Callers own the node storage and must keep it alive while registered.  The
+ * generated `name_nested` counter prevents registration/removal while a hook
+ * traversal is in progress.  `handler` is the callback to invoke and
+ * `list_node` links this caller-owned record into the hook point's listener
+ * list; applications must treat both as registered-state metadata.
  *
  * @note Usage:
  * This is typically used in your header. In foo.h using this like:
@@ -414,7 +538,7 @@ struct rt_object_information
     void name##_rmhook(name##_hooklistnode_t node)
 
 /**
- * @brief Add declaration for hook list node.
+ * @brief Define and statically initialize one caller-owned hook-list node.
  *
  * @note Usage
  * You can add a hook like this.
@@ -425,7 +549,7 @@ struct rt_object_information
  *
  * void addhook(void)
  * {
- *      bar_myhook_sethook(myhook);
+ *      bar_myhook_sethook(&myhook_node);
  * }
  * ```
  *
@@ -439,8 +563,15 @@ struct rt_object_information
     };
 
 /**
- * @note Usage
- * Add this macro to the source file where your hook point is inserted.
+ * @brief Define a hook list, its lock, and its registration functions.
+ *
+ * Add this macro exactly once, in the source file that owns the hook point.
+ * Registration and removal use irqsave locking.  They wait until all active
+ * traversals complete before changing the list, so these operations are not
+ * suitable for ISR context.  A hook handler must never add or remove a node
+ * from the same hook list: it would wait on its own traversal and deadlock.
+ * Registering the same/already-linked node twice is also invalid because the
+ * generated helpers do not perform duplicate-membership checks.
  */
 #define RT_OBJECT_HOOKLIST_DEFINE(name)                                      \
     static rt_list_t name##_hooklist = RT_LIST_OBJECT_INIT(name##_hooklist); \
@@ -470,8 +601,13 @@ struct rt_object_information
     }
 
 /**
- * @brief Add hook list point in the routines. Multiple hookers in the list will
- *        be called one by one starting from head node.
+ * @brief Invoke every registered listener in list order.
+ *
+ * The nested counter protects list topology, but handlers are deliberately
+ * called without holding the list spinlock.  This avoids executing arbitrary
+ * hook code with interrupts disabled.  It also means handlers run in the
+ * original call site's context and must provide their own protection for data
+ * they share with other threads or CPUs.
  *
  * @note Usage:
  * void foo() {
@@ -521,7 +657,16 @@ struct rt_object_information
 /**@{*/
 
 /**
- * clock & timer macros
+ * Timer flag layout stored in rt_timer::parent.flag.
+ *
+ * The active bit is maintained by the timer subsystem.  Periodicity and
+ * execution-context bits describe timer policy.  Normally a hard timer callback
+ * runs from the tick/interrupt-side timer check and therefore must not block,
+ * while a soft timer runs in the timer service thread.  Under
+ * RT_USING_TIMER_ALL_SOFT all timers, including those carrying the zero-valued
+ * HARD flag, are placed on the soft list and dispatched by that worker thread.
+ * RT_TIMER_FLAG_THREAD_TIMER identifies the per-thread timeout timer whose
+ * state is coordinated directly with the scheduler.
  */
 #define RT_TIMER_FLAG_DEACTIVATED       0x0             /**< timer is deactive */
 #define RT_TIMER_FLAG_ACTIVATED         0x1             /**< timer is active */
@@ -545,33 +690,48 @@ struct rt_object_information
 #define RT_TIMER_CTRL_SET_PARM          0x9             /**< set timer parameter  */
 
 #ifndef RT_TIMER_SKIP_LIST_LEVEL
+/** Number of ordered-list levels embedded in each timer object. */
 #define RT_TIMER_SKIP_LIST_LEVEL          1
 #endif
 
-/* 1 or 3 */
+/* Mask controlling promotion among timer skip-list levels; normally 1 or 3. */
 #ifndef RT_TIMER_SKIP_LIST_MASK
 #define RT_TIMER_SKIP_LIST_MASK         0x3             /**< Timer skips the list mask */
 #endif
 
 /**
- * timeout handler of rt_timer
+ * @brief Timer expiration callback.
+ *
+ * @param parameter Opaque value supplied when the timer is initialized.
+ *
+ * Normally the HARD/SOFT flag selects interrupt or timer-worker context;
+ * RT_USING_TIMER_ALL_SOFT overrides that choice and dispatches every callback
+ * in the worker thread.  While a timer callback is being dispatched it must not
+ * detach, delete, free, or otherwise invalidate that timer: the dispatcher
+ * invokes the exit hook and inspects timer state after the callback returns.
+ * Stopping or reconfiguring a still-live timer is permitted by its API.
  */
 typedef void (*rt_timer_func_t)(void *parameter);
 
 /**
- * timer structure
+ * @brief Kernel timer control block.
+ *
+ * Timers are ordered by absolute timeout_tick in one or more intrusive lists.
+ * init_tick stores the relative interval requested by the caller; timeout_tick
+ * is recomputed whenever the timer is started.  For periodic timers the same
+ * interval is used when scheduling the next expiration.
  */
 struct rt_timer
 {
     struct rt_object parent;                            /**< inherit from rt_object */
 
-    rt_list_t        row[RT_TIMER_SKIP_LIST_LEVEL];
+    rt_list_t        row[RT_TIMER_SKIP_LIST_LEVEL];    /**< Nodes for each level of the ordered timer skip list. */
 
     rt_timer_func_t  timeout_func;                      /**< timeout function */
     void             *parameter;                        /**< timeout function's parameter */
 
-    rt_tick_t        init_tick;                         /**< timer timeout tick */
-    rt_tick_t        timeout_tick;                      /**< timeout tick */
+    rt_tick_t        init_tick;                         /**< Relative delay/period in system ticks. */
+    rt_tick_t        timeout_tick;                      /**< Absolute tick at which the current activation expires. */
 };
 typedef struct rt_timer *rt_timer_t;
 
@@ -583,9 +743,13 @@ typedef struct rt_timer *rt_timer_t;
 /**@{*/
 
 #ifdef RT_USING_SIGNALS
+/** Maximum number of classic kernel-thread signals represented by rt_sigset_t. */
 #define RT_SIG_MAX          32
+/** Bit set of pending or masked classic signals. */
 typedef unsigned long rt_sigset_t;
+/** Signal information type reused from the configured C/POSIX environment. */
 typedef siginfo_t rt_siginfo_t;
+/** Classic one-argument signal handler executed for @p signo. */
 typedef void (*rt_sighandler_t)(int signo);
 #endif /* RT_USING_SIGNALS */
 /**@}*/
@@ -600,7 +764,10 @@ typedef void (*rt_sighandler_t)(int signo);
  */
 
 /*
- * thread state definitions
+ * Thread state encoding stored in the scheduler context's stat byte.
+ * The low three bits hold the lifecycle/suspend state; upper bits carry
+ * orthogonal yield and signal state.  Compare the low state through
+ * RT_THREAD_STAT_MASK rather than comparing the complete byte directly.
  */
 #define RT_THREAD_INIT                       0x00                /**< Initialized status */
 #define RT_THREAD_CLOSE                      0x01                /**< Closed status */
@@ -608,13 +775,15 @@ typedef void (*rt_sighandler_t)(int signo);
 #define RT_THREAD_RUNNING                    0x03                /**< Running status */
 
 /*
- * for rt_thread_suspend_with_flag()
+ * User-facing suspend policy accepted by rt_thread_suspend_with_flag().
+ * It controls which signal classes may wake an RT-Smart thread while it is
+ * blocked; the values are converted to the encoded states below.
  */
 enum
 {
-    RT_INTERRUPTIBLE = 0,
-    RT_KILLABLE,
-    RT_UNINTERRUPTIBLE,
+    RT_INTERRUPTIBLE = 0, /**< Ordinary signals may interrupt the wait. */
+    RT_KILLABLE,          /**< Only kill-class signals may interrupt the wait. */
+    RT_UNINTERRUPTIBLE,   /**< Signals do not interrupt the wait. */
 };
 
 #define RT_THREAD_SUSPEND_MASK               0x04
@@ -647,14 +816,18 @@ enum
 #define RT_THREAD_CTRL_RESET_PRIORITY   0x05                /**< Reset thread priority. */
 
 /**
- * CPU usage statistics data
+ * @brief Accumulated CPU execution-time categories.
+ *
+ * Values are architecture-defined accounting units, normally scheduler ticks.
+ * They are cumulative counters rather than percentages; per-thread recent
+ * percentages are derived from snapshots when CPU usage tracing is enabled.
  */
 struct rt_cpu_usage_stats
 {
-    rt_ubase_t user;
-    rt_ubase_t system;
-    rt_ubase_t irq;
-    rt_ubase_t idle;
+    rt_ubase_t user;       /**< Time spent executing unprivileged/user code. */
+    rt_ubase_t system;     /**< Time spent executing privileged kernel code. */
+    rt_ubase_t irq;        /**< Reserved IRQ/exception slot; common tick accounting currently leaves it unchanged. */
+    rt_ubase_t idle;       /**< Time spent in the per-CPU idle thread. */
 };
 typedef struct rt_cpu_usage_stats *rt_cpu_usage_stats_t;
 
@@ -664,14 +837,17 @@ typedef struct rt_cpu_usage_stats *rt_cpu_usage_stats_t;
 #define RT_CPU_MASK                     ((1 << RT_CPUS_NR) - 1) /**< All CPUs mask bit. */
 
 #ifndef RT_SCHEDULE_IPI
+/** Inter-processor interrupt used to request rescheduling on another CPU. */
 #define RT_SCHEDULE_IPI                 0
 #endif /* RT_SCHEDULE_IPI */
 
 #ifndef RT_STOP_IPI
+/** Inter-processor interrupt used by the architecture's CPU-stop protocol. */
 #define RT_STOP_IPI                     1
 #endif /* RT_STOP_IPI */
 
 #ifndef RT_SMP_CALL_IPI
+/** Inter-processor interrupt used to execute a function on remote CPUs. */
 #define RT_SMP_CALL_IPI                 2
 #endif
 
@@ -680,8 +856,12 @@ typedef struct rt_cpu_usage_stats *rt_cpu_usage_stats_t;
 #define _SCHEDULER_CONTEXT(fileds) fileds
 
 /**
- * CPUs definitions
+ * @brief Per-CPU scheduler and interrupt bookkeeping for an SMP build.
  *
+ * Scheduler fields are private to their owning CPU.  The local core accesses
+ * them while in an RT-Thread critical section; unsynchronized remote access is
+ * undefined.  Threads without a CPU binding can also reside in the scheduler's
+ * global ready queue, which is maintained outside this structure.
  */
 struct rt_cpu
 {
@@ -691,81 +871,92 @@ struct rt_cpu
      *   - local core: rt_enter_critical()/rt_exit_critical()
      */
     _SCHEDULER_CONTEXT(
-        struct rt_thread        *current_thread;
+        struct rt_thread        *current_thread;       /**< Thread currently executing on this CPU. */
 
-        rt_uint8_t              irq_switch_flag:1;
-        rt_uint8_t              sched_lock_flag:1;
+        rt_uint8_t              irq_switch_flag:1;     /**< Defer a requested switch until interrupt return. */
+        rt_uint8_t              sched_lock_flag:1;     /**< CPU currently owns scheduler serialization. */
 #ifndef ARCH_USING_HW_THREAD_SELF
-        rt_uint8_t              critical_switch_flag:1;
+        rt_uint8_t              critical_switch_flag:1; /**< A switch was postponed by a critical section. */
 #endif /* ARCH_USING_HW_THREAD_SELF */
 
-        rt_uint8_t              current_priority;
-        rt_list_t               priority_table[RT_THREAD_PRIORITY_MAX];
+        rt_uint8_t              current_priority;      /**< Effective priority recorded for this CPU's running thread. */
+        rt_list_t               priority_table[RT_THREAD_PRIORITY_MAX]; /**< Per-priority ready-list sentinels. */
     #if RT_THREAD_PRIORITY_MAX > 32
-        rt_uint32_t             priority_group;
-        rt_uint8_t              ready_table[32];
+        rt_uint32_t             priority_group;        /**< Top-level bitmap identifying nonempty ready groups. */
+        rt_uint8_t              ready_table[32];       /**< Second-level bitmap for priorities in each group. */
     #else
-        rt_uint32_t             priority_group;
+        rt_uint32_t             priority_group;        /**< One bit per nonempty per-CPU priority queue. */
     #endif /* RT_THREAD_PRIORITY_MAX > 32 */
 
-        rt_atomic_t             tick;   /**< Passing tickes on this core */
+        rt_atomic_t             tick;                   /**< Tick count observed on this CPU. */
     );
 
-    struct rt_thread            *idle_thread;
-    rt_atomic_t                 irq_nest;
+    struct rt_thread            *idle_thread;           /**< Lowest-priority idle thread bound to this CPU. */
+    rt_atomic_t                 irq_nest;               /**< Current interrupt nesting depth on this CPU. */
 
 #ifdef RT_USING_SMART
-    struct rt_spinlock          spinlock;
+    struct rt_spinlock          spinlock;               /**< RT-Smart-specific protection for per-CPU state. */
 #endif /* RT_USING_SMART */
 #ifdef RT_USING_CPU_USAGE_TRACER
-    struct rt_cpu_usage_stats   cpu_stat;
+    struct rt_cpu_usage_stats   cpu_stat;               /**< Cumulative CPU usage accounting. */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 #ifdef ARCH_USING_IRQ_CTX_LIST
-    rt_slist_t                  irq_ctx_head;
+    rt_slist_t                  irq_ctx_head;           /**< Stack/list of nested architecture IRQ contexts. */
 #endif /* ARCH_USING_IRQ_CTX_LIST */
 };
 
 #else /* !RT_USING_SMP */
 struct rt_cpu
 {
-    struct rt_thread            *current_thread;
-    struct rt_thread            *idle_thread;
+    struct rt_thread            *current_thread;        /**< Currently executing thread in a UP build. */
+    struct rt_thread            *idle_thread;           /**< System idle thread. */
 
 #ifdef RT_USING_CPU_USAGE_TRACER
-    struct rt_cpu_usage_stats   cpu_stat;
+    struct rt_cpu_usage_stats   cpu_stat;               /**< Cumulative CPU usage accounting. */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 #ifdef ARCH_USING_IRQ_CTX_LIST
-    rt_slist_t                  irq_ctx_head;
+    rt_slist_t                  irq_ctx_head;           /**< Nested architecture interrupt contexts. */
 #endif /* ARCH_USING_IRQ_CTX_LIST */
 };
 
 #endif /* RT_USING_SMP */
 
 typedef struct rt_cpu *rt_cpu_t;
-/* Noted: As API to reject writing to this variable from application codes */
+/* Read-only compatibility spelling: applications obtain, but cannot assign, the current thread. */
 #define rt_current_thread rt_thread_self()
 
 struct rt_thread;
 
 /**
- * interrupt/exception frame handling
+ * @brief Architecture interrupt/exception context descriptor.
  *
+ * Ports that enable ARCH_USING_IRQ_CTX_LIST push these descriptors so nested
+ * exceptions can be inspected (for example by diagnostics or backtrace code).
  */
 
 typedef struct rt_interrupt_context {
-    void *context;      /**< arch specific context */
-    rt_slist_t node;    /**< node for nested interrupt */
+    void *context;      /**< Pointer to an architecture-defined saved register frame. */
+    rt_slist_t node;    /**< Intrusive node in the current CPU's nested IRQ-context list. */
 } *rt_interrupt_context_t;
 
 #ifdef RT_USING_SMART
+/**
+ * RT-Smart wait-object wakeup adapter.
+ *
+ * A blocking subsystem installs a callback that knows how to detach @p thread
+ * from its private wait object.  The callback returns an RT-Thread status and is
+ * used when asynchronous process events need to wake a blocked user thread.
+ */
 typedef rt_err_t (*rt_wakeup_func_t)(void *object, struct rt_thread *thread);
 
+/** Callback plus opaque wait-object data associated with one blocked thread. */
 struct rt_wakeup
 {
-    rt_wakeup_func_t func;
-    void *user_data;
+    rt_wakeup_func_t func; /**< Subsystem-specific operation that performs the wakeup. */
+    void *user_data;       /**< Wait object passed as the callback's first argument. */
 };
 
+/* RT-Smart supports 64 process-level signal numbers. */
 #define _LWP_NSIG       64
 
 #ifdef ARCH_CPU_64BIT
@@ -776,11 +967,15 @@ struct rt_wakeup
 
 #define _LWP_NSIG_WORDS (RT_ALIGN(_LWP_NSIG, _LWP_NSIG_BPW) / _LWP_NSIG_BPW)
 
+/** Traditional one-argument userspace signal handler. */
 typedef void (*lwp_sighandler_t)(int);
+/** SA_SIGINFO-style userspace handler receiving extended signal context. */
 typedef void (*lwp_sigaction_t)(int signo, siginfo_t *info, void *context);
 
-typedef struct {
-    unsigned long sig[_LWP_NSIG_WORDS];
+/** Fixed-size signal bitmap split into native-word chunks. */
+typedef struct
+{
+    unsigned long sig[_LWP_NSIG_WORDS]; /**< Bit N-1 represents signal number N. */
 } lwp_sigset_t;
 
 #if _LWP_NSIG <= 64
@@ -788,170 +983,198 @@ typedef struct {
 #define lwp_sigset_init(mask)   ((lwp_sigset_t){.sig = {[0] = (long)(mask)}})
 #endif /* _LWP_NSIG <= 64 */
 
-struct lwp_sigaction {
-    union {
-        void (*_sa_handler)(int);
-        void (*_sa_sigaction)(int, siginfo_t *, void *);
+/** Per-signal action installed by an RT-Smart process. */
+struct lwp_sigaction
+{
+    union
+    {
+        void (*_sa_handler)(int);                    /**< Traditional sa_handler callback. */
+        void (*_sa_sigaction)(int, siginfo_t *, void *); /**< Extended SA_SIGINFO callback. */
     } __sa_handler;
-    lwp_sigset_t sa_mask;
-    int sa_flags;
-    void (*sa_restorer)(void);
+    lwp_sigset_t sa_mask;                            /**< Extra signals blocked during the callback. */
+    int sa_flags;                                    /**< POSIX-style SA_* behavior flags. */
+    void (*sa_restorer)(void);                       /**< Optional userspace signal-return trampoline. */
 };
 
-typedef struct lwp_siginfo_ext {
-    union {
+/** Optional signal-specific payload stored separately from common metadata. */
+typedef struct lwp_siginfo_ext
+{
+    union
+    {
         /* for SIGCHLD */
-        struct {
-            int status;
-            clock_t utime;
-            clock_t stime;
+        struct
+        {
+            int status;                              /**< Child exit status or stop/continue code. */
+            clock_t utime;                           /**< User CPU time consumed by the child. */
+            clock_t stime;                           /**< System CPU time consumed by the child. */
         } sigchld;
     };
 } *lwp_siginfo_ext_t;
 
-typedef struct lwp_siginfo {
-    rt_list_t node;
+/** One queued RT-Smart signal occurrence. */
+typedef struct lwp_siginfo
+{
+    rt_list_t node;                                  /**< Node in lwp_sigqueue::siginfo_list. */
 
-    struct {
-        int signo;
-        int code;
+    struct
+    {
+        int signo;                                   /**< Signal number. */
+        int code;                                    /**< Origin/cause code analogous to si_code. */
 
-        int from_tid;
-        pid_t from_pid;
+        int from_tid;                                /**< Sending thread ID, when known. */
+        pid_t from_pid;                              /**< Sending process ID, when known. */
     } ksiginfo;
 
-    /* the signal specified extension field */
-    struct lwp_siginfo_ext *ext;
+    struct lwp_siginfo_ext *ext;                     /**< Optional signal-specific extension payload. */
 } *lwp_siginfo_t;
 
-typedef struct lwp_sigqueue {
-    rt_list_t siginfo_list;
-    lwp_sigset_t sigset_pending;
+/** Pending signal queue and a bitmap used for fast pending checks. */
+typedef struct lwp_sigqueue
+{
+    rt_list_t siginfo_list;                          /**< Ordered list of queued signal occurrences. */
+    lwp_sigset_t sigset_pending;                     /**< Union of signal numbers currently pending. */
 } *lwp_sigqueue_t;
 
+/** Signal state private to one RT-Smart thread. */
 struct lwp_thread_signal {
-    lwp_sigset_t sigset_mask;
-    struct lwp_sigqueue sig_queue;
+    lwp_sigset_t sigset_mask;                        /**< Signals blocked by this thread. */
+    struct lwp_sigqueue sig_queue;                   /**< Signals pending specifically for this thread. */
 };
 
+/** Architecture-neutral pointers describing a suspended userspace context. */
 struct rt_user_context
 {
-    void *sp;
-    void *pc;
-    void *flag;
+    void *sp;                                        /**< Saved userspace stack pointer. */
+    void *pc;                                        /**< Saved userspace program counter. */
+    void *flag;                                      /**< Architecture status/flags value. */
 
-    void *ctx;
+    void *ctx;                                       /**< Kernel-side context marker; NULL denotes user mode. */
 };
 #endif /* RT_USING_SMART */
 
+/**
+ * Thread cleanup callback invoked during deferred thread reclamation.
+ *
+ * It runs after the thread has stopped executing.  The callback may release
+ * caller-owned resources but must not assume it runs on the exiting thread's
+ * stack; depending on configuration it runs from idle or the system defunct
+ * thread.
+ */
 typedef void (*rt_thread_cleanup_t)(struct rt_thread *tid);
 
 /**
- * @brief Thread Control Block
+ * @brief Thread Control Block (TCB).
+ *
+ * A thread is both a managed kernel object and a schedulable execution context.
+ * The architecture port owns the layout below `sp`; the scheduler owns the
+ * fields expanded by RT_SCHED_THREAD_CTX; IPC and timer code coordinate through
+ * the embedded thread_timer.  Most fields are kernel-private and must be read
+ * or changed through the public thread APIs.
  */
 struct rt_thread
 {
-    struct rt_object            parent;
+    struct rt_object            parent;                 /**< Base object; must remain the first field. */
 
-    /* stack point and entry */
-    void                        *sp;                    /**< stack point */
-    void                        *entry;                 /**< entry */
-    void                        *parameter;             /**< parameter */
-    void                        *stack_addr;            /**< stack address */
-    rt_uint32_t                 stack_size;             /**< stack size */
+    /* Architecture context, initial entry, and owned stack extent. */
+    void                        *sp;                    /**< Saved kernel stack pointer used by context switching. */
+    void                        *entry;                 /**< Thread entry routine, stored generically for ABI portability. */
+    void                        *parameter;             /**< Opaque argument passed to the entry routine. */
+    void                        *stack_addr;            /**< Lowest/base address of the allocated stack region. */
+    rt_uint32_t                 stack_size;             /**< Stack region size in bytes. */
 
-    /* error code */
-    rt_err_t                    error;                  /**< error code */
+    rt_err_t                    error;                  /**< Last per-thread kernel error; also conveys wakeup/timeout status. */
 
 #ifdef RT_USING_SMP
-    rt_atomic_t                 cpus_lock_nest;         /**< cpus lock count */
+    rt_atomic_t                 cpus_lock_nest;         /**< Nesting count for the legacy all-CPU scheduler lock. */
 #endif
 
+    /* Priority, ready/wait-list membership, state, time slice, and CPU affinity. */
     RT_SCHED_THREAD_CTX
-    struct rt_timer             thread_timer;           /**< built-in thread timer */
-    rt_thread_cleanup_t         cleanup;                /**< cleanup function when thread exit */
+    struct rt_timer             thread_timer;           /**< One-shot timeout timer reused by sleeps and blocking IPC. */
+    rt_thread_cleanup_t         cleanup;                /**< Optional callback executed during deferred reclamation. */
 
 #ifdef RT_USING_MUTEX
-    /* object for IPC */
-    rt_list_t                   taken_object_list;
-    rt_object_t                 pending_object;
+    /* Mutex ownership graph used by priority inheritance and exit cleanup. */
+    rt_list_t                   taken_object_list;      /**< Mutexes currently owned by this thread. */
+    rt_object_t                 pending_object;         /**< Mutex object this thread is currently waiting to acquire. */
 #endif /* RT_USING_MUTEX */
 
 #ifdef RT_USING_EVENT
-    /* thread event */
-    rt_uint32_t                 event_set;
-    rt_uint8_t                  event_info;
+    /* Requested event condition retained while the thread is blocked. */
+    rt_uint32_t                 event_set;              /**< Event bits requested by rt_event_recv(). */
+    rt_uint8_t                  event_info;             /**< AND/OR/CLEAR matching options for the pending receive. */
 #endif /* RT_USING_EVENT */
 
 #ifdef RT_USING_SIGNALS
-    rt_sigset_t                 sig_pending;            /**< the pending signals */
-    rt_sigset_t                 sig_mask;               /**< the mask bits of signal */
+    rt_sigset_t                 sig_pending;            /**< Bitmap of classic signals awaiting delivery. */
+    rt_sigset_t                 sig_mask;               /**< Bitmap of classic signals enabled/unmasked for delivery. */
 
 #ifndef RT_USING_SMP
-    void                        *sig_ret;               /**< the return stack pointer from signal */
+    void                        *sig_ret;               /**< Saved stack pointer used to return from a signal handler. */
 #endif /* RT_USING_SMP */
-    rt_sighandler_t             *sig_vectors;           /**< vectors of signal handler */
-    void                        *si_list;               /**< the signal infor list */
+    rt_sighandler_t             *sig_vectors;           /**< Per-signal handler vector allocated for the thread. */
+    void                        *si_list;               /**< Private queued signal-information list. */
 #endif /* RT_USING_SIGNALS */
 
 #ifdef RT_USING_PTHREADS
-    void                        *pthread_data;          /**< the handle of pthread data, adapt 32/64bit */
+    void                        *pthread_data;          /**< POSIX-thread adaptation data, pointer-sized on all ABIs. */
 #endif /* RT_USING_PTHREADS */
 
     /* light weight process if present */
 #ifdef RT_USING_SMART
-    void                        *msg_ret;               /**< the return msg */
+    void                        *msg_ret;               /**< Saved return value/message used by RT-Smart IPC paths. */
 
-    void                        *lwp;                   /**< the lwp reference */
-    /* for user create */
-    void                        *user_entry;
-    void                        *user_stack;
-    rt_uint32_t                 user_stack_size;
-    rt_uint32_t                 *kernel_sp;             /**< kernel stack point */
-    rt_list_t                   sibling;                /**< next thread of same process */
+    void                        *lwp;                   /**< Owning lightweight-process object. */
+    /* Userspace entry and dual-stack information. */
+    void                        *user_entry;            /**< Initial userspace program counter. */
+    void                        *user_stack;            /**< Base/address of the userspace stack mapping. */
+    rt_uint32_t                 user_stack_size;        /**< Userspace stack extent in bytes. */
+    rt_uint32_t                 *kernel_sp;             /**< Kernel stack pointer saved across user transitions. */
+    rt_list_t                   sibling;                /**< Node in the owning process's thread list. */
 
-    struct lwp_thread_signal    signal;                 /**< lwp signal for user-space thread */
-    struct rt_user_context      user_ctx;               /**< user space context */
-    struct rt_wakeup            wakeup_handle;          /**< wakeup handle for IPC */
-    rt_atomic_t                 exit_request;           /**< pending exit request of thread */
-    int                         tid;                    /**< thread ID used by process */
-    int                         tid_ref_count;          /**< reference of tid */
-    void                        *susp_recycler;         /**< suspended recycler on this thread */
-    void                        *robust_list;           /**< pi lock, very carefully, it's a userspace list!*/
+    struct lwp_thread_signal    signal;                 /**< Mask and queued signals private to this user thread. */
+    struct rt_user_context      user_ctx;               /**< Saved architecture-neutral userspace context. */
+    struct rt_wakeup            wakeup_handle;          /**< Adapter for removing this thread from an RT-Smart wait. */
+    rt_atomic_t                 exit_request;           /**< Asynchronous request for this thread to terminate. */
+    int                         tid;                    /**< Process-visible thread identifier. */
+    int                         tid_ref_count;          /**< References keeping the TID mapping alive. */
+    void                        *susp_recycler;         /**< Recycler waiting for this suspended thread to finish. */
+    void                        *robust_list;           /**< Userspace robust/PI-lock list; validate every access carefully. */
 
 #ifndef ARCH_MM_MMU
-    lwp_sighandler_t            signal_handler[32];
+    lwp_sighandler_t            signal_handler[32];    /**< Per-signal handlers for no-MMU RT-Smart targets. */
 #else
-    int                         step_exec;
-    int                         debug_attach_req;
-    int                         debug_ret_user;
-    int                         debug_suspend;
-    struct rt_hw_exp_stack      *regs;
-    void                        *thread_idr;            /** lwp thread indicator */
-    int                         *clear_child_tid;
+    int                         step_exec;              /**< Debugger single-step execution request/state. */
+    int                         debug_attach_req;       /**< Pending debugger attach request. */
+    int                         debug_ret_user;         /**< Debugger should return control to userspace. */
+    int                         debug_suspend;          /**< Thread is suspended by the debugger. */
+    struct rt_hw_exp_stack      *regs;                  /**< Architecture exception frame for ptrace/debugging. */
+    void                        *thread_idr;             /**< Saved architecture thread-ID/TLS register value. */
+    int                         *clear_child_tid;       /**< Userspace address cleared and futex-woken on exit. */
 #endif /* ARCH_MM_MMU */
 #endif /* RT_USING_SMART */
 
 #ifdef RT_USING_CPU_USAGE_TRACER
-    rt_ubase_t                  user_time;              /**< Ticks on user */
-    rt_ubase_t                  system_time;            /**< Ticks on system */
-    rt_ubase_t                  total_time_prev;        /**< Previous total ticks snapshot */
-    rt_uint8_t                  cpu_usage;              /**< Recent CPU usage in percent */
+    rt_ubase_t                  user_time;              /**< Accumulated execution units in userspace. */
+    rt_ubase_t                  system_time;            /**< Accumulated execution units in kernel space. */
+    rt_ubase_t                  total_time_prev;        /**< Previous total-time snapshot used for deltas. */
+    rt_uint8_t                  cpu_usage;              /**< Most recently calculated CPU utilization percentage. */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 
 #ifdef RT_USING_MEM_PROTECTION
-    void *mem_regions;
+    void *mem_regions;                                 /**< Architecture-defined memory-protection region set. */
 #ifdef RT_USING_HW_STACK_GUARD
-    void *stack_buf;
+    void *stack_buf;                                   /**< Stack allocation metadata retained for guard setup. */
 #endif /* RT_USING_HW_STACK_GUARD */
 #endif /* RT_USING_MEM_PROTECTION */
 
-    struct rt_spinlock          spinlock;
-    rt_ubase_t                  user_data;              /**< private user data beyond this thread */
+    struct rt_spinlock          spinlock;               /**< Protects exit-time mutex cleanup and selected RT-Smart recycler snapshots. */
+    rt_ubase_t                  user_data;              /**< Application-owned scalar/pointer-sized extension slot. */
 };
 typedef struct rt_thread *rt_thread_t;
 
 #ifdef RT_USING_SMART
+/** True when an RT-Smart thread's saved state represents userspace execution. */
 #define LWP_IS_USER_MODE(t) ((t)->user_ctx.ctx == RT_NULL)
 #else
 #define LWP_IS_USER_MODE(t) (0)
@@ -966,7 +1189,12 @@ typedef struct rt_thread *rt_thread_t;
 /**@{*/
 
 /**
- * IPC flags and control command definitions
+ * IPC wait ordering and generic control commands.
+ *
+ * FIFO preserves arrival order.  PRIO orders waiters by effective scheduling
+ * priority so that a numerically smaller (higher-priority) thread can be woken
+ * first.  RT_WAITING_NO makes a take/receive operation non-blocking, while
+ * RT_WAITING_FOREVER suppresses installation of a timeout timer.
  */
 #define RT_IPC_FLAG_FIFO                0x00            /**< FIFOed IPC. @ref group_thread_comm. */
 #define RT_IPC_FLAG_PRIO                0x01            /**< PRIOed IPC. @ref group_thread_comm. */
@@ -980,13 +1208,17 @@ typedef struct rt_thread *rt_thread_t;
 #define RT_WAITING_NO                   0               /**< Non-block. */
 
 /**
- * Base structure of IPC object
+ * @brief Common base of semaphore, mutex, event, mailbox, and message queue.
+ *
+ * The parent object's flag stores the IPC wait-order policy.  suspend_thread is
+ * the receiver/acquirer wait queue.  Mailboxes and message queues additionally
+ * carry a sender wait queue for the full-buffer case.
  */
 struct rt_ipc_object
 {
     struct rt_object parent;                            /**< inherit from rt_object */
 
-    rt_list_t suspend_thread;                 /**< threads pended on this resource */
+    rt_list_t suspend_thread;                           /**< Threads blocked waiting to acquire/receive this resource. */
 };
 
 /**
@@ -996,15 +1228,19 @@ struct rt_ipc_object
 
 #ifdef RT_USING_SEMAPHORE
 /**
- * Semaphore structure
+ * @brief Counting semaphore control block.
+ *
+ * value is the immediately available token count and never exceeds max_value.
+ * spinlock makes the counter update and waiter transfer atomic with respect to
+ * interrupts and other CPUs.
  */
 struct rt_semaphore
 {
     struct rt_ipc_object parent;                        /**< inherit from ipc_object */
 
-    rt_uint16_t          value;                         /**< value of semaphore. */
-    rt_uint16_t          max_value;
-    struct rt_spinlock   spinlock;
+    rt_uint16_t          value;                         /**< Tokens currently available without blocking. */
+    rt_uint16_t          max_value;                     /**< Saturation/validation limit for value. */
+    struct rt_spinlock   spinlock;                      /**< Protects value and the inherited wait queue. */
 };
 typedef struct rt_semaphore *rt_sem_t;
 #endif /* RT_USING_SEMAPHORE */
@@ -1018,20 +1254,28 @@ typedef struct rt_semaphore *rt_sem_t;
 
 #ifdef RT_USING_MUTEX
 /**
- * Mutual exclusion (mutex) structure
+ * @brief Recursive mutex with priority-inversion mitigation.
+ *
+ * owner may acquire the mutex repeatedly; hold counts the nesting depth.  The
+ * mutex is also linked into owner->taken_object_list through taken_list.  The
+ * priority fields retain the configured ceiling and the best priority among
+ * waiters so the implementation can propagate and later restore effective
+ * priorities.  During normal operation a mutex may be released only by owner.
+ * Kernel cleanup is the deliberate exception: it may unwind a mutex whose
+ * recorded owner has already entered RT_THREAD_CLOSE state.
  */
 struct rt_mutex
 {
     struct rt_ipc_object parent;                        /**< inherit from ipc_object */
 
-    rt_uint8_t           ceiling_priority;              /**< the priority ceiling of mutexe */
-    rt_uint8_t           priority;                      /**< the maximal priority for pending thread */
-    rt_uint8_t           hold;                          /**< numbers of thread hold the mutex */
-    rt_uint8_t           reserved;                      /**< reserved field */
+    rt_uint8_t           ceiling_priority;              /**< Configured priority ceiling; numerically lower means higher. */
+    rt_uint8_t           priority;                      /**< Highest effective priority represented by pending waiters. */
+    rt_uint8_t           hold;                          /**< Recursive acquisition depth held by owner. */
+    rt_uint8_t           reserved;                      /**< Padding/reserved byte; callers must not use it. */
 
-    struct rt_thread    *owner;                         /**< current owner of mutex */
-    rt_list_t            taken_list;                    /**< the object list taken by thread */
-    struct rt_spinlock   spinlock;
+    struct rt_thread    *owner;                         /**< Thread that currently owns the mutex, or NULL. */
+    rt_list_t            taken_list;                    /**< Node in owner->taken_object_list. */
+    struct rt_spinlock   spinlock;                      /**< Protects ownership, hold count, priority, and waiters. */
 };
 typedef struct rt_mutex *rt_mutex_t;
 #endif /* RT_USING_MUTEX */
@@ -1045,21 +1289,27 @@ typedef struct rt_mutex *rt_mutex_t;
 
 #ifdef RT_USING_EVENT
 /**
- * flag definitions in event
+ * Event receive-option flags.  Exactly one of AND/OR describes matching;
+ * CLEAR consumes the matched bits atomically when the receive succeeds.
  */
 #define RT_EVENT_FLAG_AND               0x01            /**< logic and */
 #define RT_EVENT_FLAG_OR                0x02            /**< logic or */
 #define RT_EVENT_FLAG_CLEAR             0x04            /**< clear flag */
 
-/*
- * event structure
+/**
+ * @brief Event-bit synchronization object.
+ *
+ * Each blocked receiver stores its requested mask and options in its TCB.
+ * Sending bits ORs them into set and scans waiters for matching AND/OR
+ * conditions.  Event bits represent state, not queued occurrences; repeatedly
+ * sending an already-set bit does not accumulate a count.
  */
 struct rt_event
 {
     struct rt_ipc_object parent;                        /**< inherit from ipc_object */
 
-    rt_uint32_t          set;                           /**< event set */
-    struct rt_spinlock   spinlock;
+    rt_uint32_t          set;                           /**< Current 32-bit event state. */
+    struct rt_spinlock   spinlock;                      /**< Protects set and receiver wakeup selection. */
 };
 typedef struct rt_event *rt_event_t;
 #endif /* RT_USING_EVENT */
@@ -1073,22 +1323,27 @@ typedef struct rt_event *rt_event_t;
 
 #ifdef RT_USING_MAILBOX
 /**
- * mailbox structure
+ * @brief Ring buffer of pointer-width messages.
+ *
+ * A mailbox copies one rt_ubase_t value per message; it does not copy data
+ * referenced by that value.  entry is the current occupancy, while in_offset
+ * and out_offset wrap modulo size.  Receivers wait on the inherited queue and
+ * senders blocked by a full ring wait on suspend_sender_thread.
  */
 struct rt_mailbox
 {
     struct rt_ipc_object parent;                        /**< inherit from ipc_object */
 
-    rt_ubase_t          *msg_pool;                      /**< start address of message buffer */
+    rt_ubase_t          *msg_pool;                      /**< Array of slots: caller-owned for init, heap-owned for create. */
 
-    rt_uint16_t          size;                          /**< size of message pool */
+    rt_uint16_t          size;                          /**< Total number of slots in msg_pool. */
 
-    rt_uint16_t          entry;                         /**< index of messages in msg_pool */
-    rt_uint16_t          in_offset;                     /**< input offset of the message buffer */
-    rt_uint16_t          out_offset;                    /**< output offset of the message buffer */
+    rt_uint16_t          entry;                         /**< Number of currently queued messages. */
+    rt_uint16_t          in_offset;                     /**< Ring index at which the next normal send writes. */
+    rt_uint16_t          out_offset;                    /**< Ring index from which the next receive reads. */
 
-    rt_list_t            suspend_sender_thread;         /**< sender thread suspended on this mailbox */
-    struct rt_spinlock   spinlock;
+    rt_list_t            suspend_sender_thread;         /**< Threads blocked because the ring is full. */
+    struct rt_spinlock   spinlock;                      /**< Protects ring indexes, occupancy, and both wait queues. */
 };
 typedef struct rt_mailbox *rt_mailbox_t;
 #endif /* RT_USING_MAILBOX */
@@ -1102,25 +1357,32 @@ typedef struct rt_mailbox *rt_mailbox_t;
 
 #ifdef RT_USING_MESSAGEQUEUE
 /**
- * message queue structure
+ * @brief Queue of fixed-capacity, copy-by-value messages.
+ *
+ * msg_pool is divided into max_msgs internal nodes, each large enough for an
+ * implementation header plus an aligned msg_size payload.  The three private
+ * pointers form the queued-message chain and the free-node pool.  The queued
+ * chain is FIFO for ordinary sends, but priority-send/priority-receive support
+ * may order nodes by message priority.  Unlike a mailbox, a send copies up to
+ * msg_size bytes into a queue-owned node.
  */
 struct rt_messagequeue
 {
     struct rt_ipc_object parent;                        /**< inherit from ipc_object */
 
-    void                *msg_pool;                      /**< start address of message queue */
+    void                *msg_pool;                      /**< Node storage: caller-owned for init, heap-owned for create. */
 
-    rt_uint16_t          msg_size;                      /**< message size of each message */
-    rt_uint16_t          max_msgs;                      /**< max number of messages */
+    rt_uint16_t          msg_size;                      /**< Maximum payload bytes stored in each node. */
+    rt_uint16_t          max_msgs;                      /**< Total node count and maximum queue depth. */
 
-    rt_uint16_t          entry;                         /**< index of messages in the queue */
+    rt_uint16_t          entry;                         /**< Number of messages currently queued. */
 
-    void                *msg_queue_head;                /**< list head */
-    void                *msg_queue_tail;                /**< list tail */
-    void                *msg_queue_free;                /**< pointer indicated the free node of queue */
+    void                *msg_queue_head;                /**< First queued internal message node. */
+    void                *msg_queue_tail;                /**< Last queued internal message node. */
+    void                *msg_queue_free;                /**< Head of the internal free-node chain. */
 
-    rt_list_t            suspend_sender_thread;         /**< sender thread suspended on this message queue */
-    struct rt_spinlock   spinlock;
+    rt_list_t            suspend_sender_thread;         /**< Senders blocked because no free node is available. */
+    struct rt_spinlock   spinlock;                      /**< Protects node chains, entry, and wait queues. */
 };
 typedef struct rt_messagequeue *rt_mq_t;
 #endif /* RT_USING_MESSAGEQUEUE */
@@ -1136,17 +1398,22 @@ typedef struct rt_messagequeue *rt_mq_t;
 /**@{*/
 
 #ifdef RT_USING_HEAP
-/*
- * memory structure
+/**
+ * @brief Common statistics object for system-heap backends.
+ *
+ * Small-memory and slab allocators expose the same public rt_mem_t handle by
+ * embedding this descriptor in their private implementation object.  Values
+ * report allocator-managed payload/accounting bytes and need not equal raw BSP
+ * region boundaries after alignment and metadata overhead are applied.
  */
 struct rt_memory
 {
-    struct rt_object        parent;                 /**< inherit from rt_object */
-    const char *            algorithm;              /**< Memory management algorithm name */
-    rt_ubase_t              address;                /**< memory start address */
-    rt_size_t               total;                  /**< memory size */
-    rt_size_t               used;                   /**< size used */
-    rt_size_t               max;                    /**< maximum usage */
+    struct rt_object        parent;                 /**< Base object; must remain the first field. */
+    const char *            algorithm;              /**< Human-readable allocator/backend name. */
+    rt_ubase_t              address;                /**< Aligned start address of the managed region. */
+    rt_size_t               total;                  /**< Total bytes managed by this allocator. */
+    rt_size_t               used;                   /**< Current accounted allocation in bytes. */
+    rt_size_t               max;                    /**< High-water mark of used since initialization. */
 };
 typedef struct rt_memory *rt_mem_t;
 #endif /* RT_USING_HEAP */
@@ -1166,65 +1433,82 @@ typedef rt_mem_t rt_slab_t;
 
 #ifdef RT_USING_MEMHEAP
 /**
- * memory item on the heap
+ * @brief Boundary tag and list links stored before a memheap allocation.
+ *
+ * Every physical block participates in the address-ordered next/prev chain;
+ * only free blocks participate in next_free/prev_free.  pool_ptr identifies the
+ * owning heap when multiple memheaps feed the system allocator.  magic encodes
+ * allocation state and is checked to detect invalid or repeated frees.
  */
 struct rt_memheap_item
 {
-    rt_uint32_t             magic;                      /**< magic number for memheap */
-    struct rt_memheap      *pool_ptr;                   /**< point of pool */
+    rt_uint32_t             magic;                      /**< Integrity/allocation-state marker. */
+    struct rt_memheap      *pool_ptr;                   /**< Heap that owns this block. */
 
-    struct rt_memheap_item *next;                       /**< next memheap item */
-    struct rt_memheap_item *prev;                       /**< prev memheap item */
+    struct rt_memheap_item *next;                       /**< Next physical block by address. */
+    struct rt_memheap_item *prev;                       /**< Previous physical block by address. */
 
-    struct rt_memheap_item *next_free;                  /**< next free memheap item */
-    struct rt_memheap_item *prev_free;                  /**< prev free memheap item */
+    struct rt_memheap_item *next_free;                  /**< Next free block in allocator search order. */
+    struct rt_memheap_item *prev_free;                  /**< Previous free block in allocator search order. */
 #ifdef RT_USING_MEMTRACE
-    rt_uint8_t              owner_thread_name[4];       /**< owner thread name */
+    rt_uint8_t              owner_thread_name[4];       /**< Truncated allocating-thread name for diagnostics. */
 #endif /* RT_USING_MEMTRACE */
 };
 
 /**
- * Base structure of memory heap object
+ * @brief Variable-size allocator over one caller-provided memory region.
+ *
+ * block_list points to the first physical boundary-tag block; free_header is
+ * the embedded free-list sentinel and free_list normally points to that
+ * sentinel as the search anchor.  The embedded semaphore normally
+ * serializes allocation.  When locked is true an outer system-heap lock already
+ * provides serialization, avoiding recursive locking and early-startup
+ * dependence on the semaphore.
  */
 struct rt_memheap
 {
     struct rt_object        parent;                     /**< inherit from rt_object */
 
-    void                   *start_addr;                 /**< pool start address and size */
+    void                   *start_addr;                 /**< Caller-supplied start; allocator assumes required alignment. */
 
-    rt_size_t               pool_size;                  /**< pool size */
-    rt_size_t               available_size;             /**< available size */
-    rt_size_t               max_used_size;              /**< maximum allocated size */
+    rt_size_t               pool_size;                  /**< Supplied size rounded down; includes allocator boundary headers. */
+    rt_size_t               available_size;            /**< Current free bytes tracked by the allocator. */
+    rt_size_t               max_used_size;              /**< High-water mark of allocated bytes. */
 
-    struct rt_memheap_item *block_list;                 /**< used block list */
+    struct rt_memheap_item *block_list;                 /**< Sentinel/entry for the physical block chain. */
 
-    struct rt_memheap_item *free_list;                  /**< free block list */
-    struct rt_memheap_item  free_header;                /**< free block list header */
+    struct rt_memheap_item *free_list;                  /**< Free-list sentinel/search anchor (normally &free_header). */
+    struct rt_memheap_item  free_header;                /**< Embedded sentinel for the free-block chain. */
 
-    struct rt_semaphore     lock;                       /**< semaphore lock */
-    rt_bool_t               locked;                     /**< External lock mark */
+    struct rt_semaphore     lock;                       /**< Internal allocator mutex-like semaphore. */
+    rt_bool_t               locked;                     /**< True when synchronization is supplied externally. */
 };
 #endif /* RT_USING_MEMHEAP */
 
 #ifdef RT_USING_MEMPOOL
 /**
- * Base structure of Memory pool object
+ * @brief Fixed-size block pool with optional blocking allocation.
+ *
+ * Free blocks reuse their first pointer-sized bytes to link block_list.  A take
+ * can suspend when block_free_count is zero; rt_mp_free() returns a block and
+ * wakes one waiter.  The pool neither constructs nor destroys objects stored in
+ * blocks, and callers must return each block to its original pool exactly once.
  */
 struct rt_mempool
 {
     struct rt_object    parent;                            /**< inherit from rt_object */
 
-    void                *start_address;                     /**< memory pool start */
-    rt_size_t           size;                              /**< size of memory pool */
+    void                *start_address;                    /**< Backing storage: caller-owned for init, heap-owned for create. */
+    rt_size_t           size;                             /**< Total bytes supplied for the pool. */
 
-    rt_size_t           block_size;                        /**< size of memory blocks */
-    rt_uint8_t          *block_list;                        /**< memory blocks list */
+    rt_size_t           block_size;                       /**< Aligned bytes in each allocatable block. */
+    rt_uint8_t          *block_list;                       /**< Head of the intrusive free-block chain. */
 
-    rt_size_t           block_total_count;                 /**< numbers of memory block */
-    rt_size_t           block_free_count;                  /**< numbers of free memory block */
+    rt_size_t           block_total_count;                /**< Number of blocks carved from the region. */
+    rt_size_t           block_free_count;                 /**< Number of blocks currently available. */
 
-    rt_list_t           suspend_thread;                    /**< threads pended on this resource */
-    struct rt_spinlock  spinlock;
+    rt_list_t           suspend_thread;                   /**< Threads blocked waiting for a free block. */
+    struct rt_spinlock  spinlock;                         /**< Protects free chain, counters, and waiters. */
 };
 typedef struct rt_mempool *rt_mp_t;
 #endif /* RT_USING_MEMPOOL */
@@ -1239,7 +1523,11 @@ typedef struct rt_mempool *rt_mp_t;
 /**@{*/
 
 /**
- * device (I/O) class type
+ * @brief Coarse class used for discovery and class-specific control ranges.
+ *
+ * This value identifies the public role of a device, not the concrete driver or
+ * bus used to reach it.  A class driver may embed rt_device in a larger object
+ * and keep protocol-specific state after the base object.
  */
 enum rt_device_class_type
 {
@@ -1278,7 +1566,12 @@ enum rt_device_class_type
 };
 
 /**
- * device flags definitions
+ * Device capability and runtime-state flags stored in rt_device::flag.
+ *
+ * The low access bits describe supported directions, middle bits describe
+ * lifecycle/capabilities, and high bits select interrupt or DMA transfer modes.
+ * These are registration-time/device-state flags and are distinct from the
+ * per-open request recorded in rt_device::open_flag.
  */
 #define RT_DEVICE_FLAG_DEACTIVATE       0x000           /**< device is not not initialized */
 
@@ -1323,7 +1616,9 @@ enum rt_device_class_type
 #define RT_DEVICE_CTRL_MASK             0x1f            /**< mask for contrl commands */
 
 /**
- * device control
+ * Build the base of a class-specific command namespace.  Class drivers can add
+ * small command offsets to this value without colliding with generic commands
+ * or commands of another device class.
  */
 #define RT_DEVICE_CTRL_BASE(Type)        ((RT_Device_Class_##Type + 1) * 0x100)
 
@@ -1332,28 +1627,43 @@ typedef struct rt_device *rt_device_t;
 
 #ifdef RT_USING_DEVICE_OPS
 /**
- * operations set for device object
+ * @brief Uniform operations implemented by a concrete or class device driver.
+ *
+ * The core wrappers in components/drivers/core/device.c handle object lookup,
+ * lazy initialization, state checks, and reference counts before dispatching
+ * through this table.  A NULL optional operation is reported according to the
+ * wrapper's contract.  Driver read/write callbacks normally return a
+ * nonnegative transferred-unit count; an individual device class may document
+ * an additional negative-error convention.  The core wrappers themselves use
+ * zero plus errno for a closed device or missing operation.  The unit represented
+ * by pos and size is device-class specific (bytes for streams, often blocks for
+ * block devices).
  */
 struct rt_device_ops
 {
-    /* common device interface */
-    rt_err_t  (*init)   (rt_device_t dev);
-    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag);
-    rt_err_t  (*close)  (rt_device_t dev);
-    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size);
-    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size);
-    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args);
+    /* Common device interface implemented by the driver. */
+    rt_err_t  (*init)   (rt_device_t dev); /**< Put hardware/software state into an initialized state. */
+    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< Apply one open request's mode flags. */
+    rt_err_t  (*close)  (rt_device_t dev); /**< Release/disable resources when the last user closes. */
+    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< Transfer data from device to buffer. */
+    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< Transfer data from buffer to device. */
+    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< Execute generic or class-specific control command. */
 };
 #endif /* RT_USING_DEVICE_OPS */
 
 /**
- * WaitQueue structure
+ * @brief Poll/select-compatible wait queue associated with a device or channel.
+ *
+ * waiting_list contains framework-defined wait nodes.  flag is the waitqueue's
+ * internal CLEAN/WAKEUP state, not a device readiness-event bitmask; wakeup keys
+ * are delivered separately to node callbacks.  spinlock makes state updates and
+ * waiter notification atomic with interrupt-side producers.
  */
 struct rt_wqueue
 {
-    rt_uint32_t flag;
-    rt_list_t waiting_list;
-    struct rt_spinlock spinlock;
+    rt_uint32_t flag;                  /**< Internal RT_WQ_FLAG_CLEAN/WAKEUP state. */
+    rt_list_t waiting_list;            /**< Tasks or poll requests waiting for readiness. */
+    struct rt_spinlock spinlock;       /**< Protects flag and waiting_list. */
 };
 typedef struct rt_wqueue rt_wqueue_t;
 
@@ -1363,85 +1673,105 @@ struct rt_bus;
 #endif /* RT_USING_DM */
 
 /**
- * Device structure
+ * @brief Base object shared by every RT-Thread device instance.
+ *
+ * A class/concrete driver embeds this structure at offset zero, registers it by
+ * name, and supplies operations plus user_data.  The device core owns type,
+ * lifecycle flags, open reference accounting, and dispatch.  With
+ * RT_USING_DM, the same object also participates in bus/driver matching; Device
+ * Model extends rather than replaces the rt_device API.
  */
 struct rt_device
 {
     struct rt_object          parent;                   /**< inherit from rt_object */
 
 #ifdef RT_USING_DM
-    struct rt_bus *bus;                                 /**< the bus mounting to */
-    rt_list_t node;                                     /**< to mount on bus */
-    struct rt_driver *drv;                              /**< driver for powering the device */
+    struct rt_bus *bus;                                 /**< Bus on which this device is registered. */
+    rt_list_t node;                                     /**< Node in the bus's device collection. */
+    struct rt_driver *drv;                              /**< Driver successfully bound to this device. */
 #ifdef RT_USING_OFW
-    void *ofw_node;                                     /**< ofw node get from device tree */
+    void *ofw_node;                                     /**< Open Firmware/device-tree node describing this instance. */
 #endif /* RT_USING_OFW */
-    void *power_domain_unit;
+    void *power_domain_unit;                            /**< Device Model power-domain attachment, if any. */
 #ifdef RT_USING_DVFS
-    void *dvfs_scaling;
+    void *dvfs_scaling;                                 /**< Per-device dynamic voltage/frequency scaling state. */
 #endif
 #ifdef RT_USING_DMA
-    const void *dma_ops;
+    const void *dma_ops;                                /**< DMA mapping/operation set selected for this device. */
 #endif
 #endif /* RT_USING_DM */
 
-    enum rt_device_class_type type;                     /**< device type */
-    rt_uint16_t               flag;                     /**< device flag */
-    rt_uint16_t               open_flag;                /**< device open flag */
+    enum rt_device_class_type type;                     /**< Public device class. */
+    rt_uint16_t               flag;                     /**< Capabilities and current activation/suspend state. */
+    rt_uint16_t               open_flag;                /**< Effective mode and transfer flags of current opens. */
 
-    rt_uint8_t                ref_count;                /**< reference count */
+    rt_uint8_t                ref_count;                /**< Open references, including a core-accepted -RT_ENOSYS open result. */
 #ifdef RT_USING_DM
-    rt_uint8_t                master_id;                /**< 0 - 255 */
+    rt_uint8_t                master_id;                /**< Device Model master/owner identifier, range 0..255. */
 #endif
-    rt_uint8_t                device_id;                /**< 0 - 255 */
+    rt_uint8_t                device_id;                /**< Driver- or framework-assigned instance ID, range 0..255. */
 
-    /* device call back */
-    rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size);
-    rt_err_t (*tx_complete)(rt_device_t dev, void *buffer);
+    /*
+     * Optional asynchronous notifications installed by an upper layer.
+     * A lower driver may invoke them from its ISR/DMA completion path, so the
+     * callback must follow that driver's context rules and the registrant must
+     * keep both function and referenced state alive until in-flight callbacks
+     * have been quiesced before replacement/unregistration.
+     */
+    rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size); /**< Notify that size units can be read; may run in ISR context. */
+    rt_err_t (*tx_complete)(rt_device_t dev, void *buffer);   /**< Notify completion of an asynchronous transmit buffer. */
 
 #ifdef RT_USING_DEVICE_OPS
-    const struct rt_device_ops *ops;
+    const struct rt_device_ops *ops;                    /**< Immutable operation table supplied by the driver. */
 #else
-    /* common device interface */
-    rt_err_t  (*init)   (rt_device_t dev);
-    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag);
-    rt_err_t  (*close)  (rt_device_t dev);
-    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size);
-    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size);
-    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args);
+    /* Legacy ABI stores the same common operations directly in each object. */
+    rt_err_t  (*init)   (rt_device_t dev); /**< Initialize the device. */
+    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< Apply requested open mode. */
+    rt_err_t  (*close)  (rt_device_t dev); /**< Close/release the device. */
+    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< Read device-specific units. */
+    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< Write device-specific units. */
+    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< Execute a control command. */
 #endif /* RT_USING_DEVICE_OPS */
 
 #ifdef RT_USING_POSIX_DEVIO
-    const struct dfs_file_ops *fops;
-    struct rt_wqueue wait_queue;
+    const struct dfs_file_ops *fops;                    /**< POSIX/DFS file operations exposed by this device. */
+    struct rt_wqueue wait_queue;                        /**< poll/select waiters for this device. */
 #endif /* RT_USING_POSIX_DEVIO */
 
     rt_err_t (*readlink)
-        (rt_device_t dev, char *buf, int len);          /**< for dynamic device */
+        (rt_device_t dev, char *buf, int len);          /**< Return the devfs symbolic-link target exposed by this device. */
 
-    void                     *user_data;                /**< device private data */
+    void                     *user_data;                /**< Opaque class/concrete-driver private state. */
 };
 
 /**
- * Notify structure
+ * @brief Pair used to register a device-specific notification callback.
  */
 struct rt_device_notify
 {
-    void (*notify)(rt_device_t dev);
-    struct rt_device *dev;
+    void (*notify)(rt_device_t dev);                    /**< Driver-triggered callback; execution context is driver-specific. */
+    struct rt_device *dev;                              /**< Device associated with the notification. */
 };
 
 #ifdef RT_USING_SMART
+/**
+ * @brief RT-Smart synchronous message/reply channel.
+ *
+ * A channel is an IPC object that coordinates sender messages, blocked sender
+ * threads, one reply target, and pollable reader readiness.  slock protects all
+ * queue and state transitions; ref controls lifetime while users retain the
+ * channel.
+ */
 struct rt_channel
 {
-    struct rt_ipc_object parent;                        /**< inherit from object */
-    struct rt_thread *reply;                            /**< the thread will be reply */
-    struct rt_spinlock slock;                           /**< spinlock of this channel */
-    rt_list_t wait_msg;                                 /**< the wait queue of sender msg */
-    rt_list_t wait_thread;                              /**< the wait queue of sender thread */
-    rt_wqueue_t reader_queue;                           /**< channel poll queue */
-    rt_uint8_t  stat;                                   /**< the status of this channel */
-    rt_ubase_t  ref;
+    struct rt_ipc_object parent;                        /**< Base IPC object and generic wait queue. */
+    struct rt_thread *reply;                            /**< Sending thread currently waiting to receive a reply. */
+    struct rt_spinlock slock;                           /**< Protects channel state and all private queues. */
+    rt_list_t wait_msg;                                 /**< Pending sender-message descriptors. */
+    rt_list_t wait_thread;                              /**< Sender threads blocked awaiting receive/reply. */
+    rt_wqueue_t reader_queue;                           /**< poll/select queue for readable channel state. */
+    rt_uint8_t  stat;                                   /**< Implementation-defined channel lifecycle/status bits. */
+    rt_ubase_t  ref;                                    /**< Channel reference count. */
 };
 typedef struct rt_channel *rt_channel_t;
 #endif /* RT_USING_SMART */
@@ -1458,8 +1788,8 @@ typedef struct rt_channel *rt_channel_t;
 namespace rtthread {
 
 enum TICK_WAIT {
-    WAIT_NONE = 0,
-    WAIT_FOREVER = -1,
+    WAIT_NONE = 0,       /**< Perform a non-blocking operation. */
+    WAIT_FOREVER = -1,   /**< Block without installing a finite timeout. */
 };
 
 }
