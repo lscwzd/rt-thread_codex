@@ -3,18 +3,18 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2006-03-18     Bernard      the first version
- * 2006-04-25     Bernard      add rt_hw_context_switch_interrupt declaration
- * 2006-09-24     Bernard      add rt_hw_context_switch_to declaration
- * 2012-12-29     Bernard      add rt_hw_exception_install declaration
- * 2017-10-17     Hichard      add some macros
- * 2018-11-17     Jesven       add rt_hw_spinlock_t
+ * 变更记录：
+ * 日期           作者         说明
+ * 2006-03-18     Bernard      第一个版本
+ * 2006-04-25     Bernard      添加rt_hw_context_switch_interrupt声明
+ * 2006-09-24     Bernard      添加rt_hw_context_switch_to声明
+ * 2012-12-29     Bernard      添加rt_hw_exception_install声明
+ * 2017-10-17     Hichard      添加一些宏
+ * 2018-11-17     Jesven       添加rt_hw_spinlock_t
  *                             add smp support
- * 2019-05-18     Bernard      add empty definition for not enable cache case
- * 2023-09-15     xqyjlj       perf rt_hw_interrupt_disable/enable
- * 2023-10-16     Shell        Support a new backtrace framework
+ * 2019-05-18     Bernard      添加空定义以表示不启用缓存情况
+ * 2023-09-15     xqyjlj       性能 rt_hw_interrupt_disable/启用
+ * 2023-10-16     Shell        支持新的回溯框架
  */
 
 #ifndef __RT_HW_H__
@@ -22,27 +22,22 @@
 
 /**
  * @file rthw.h
- * @brief Contract between the architecture/BSP layer and the RT-Thread kernel.
+ * @brief 架构/BSP 层与 RT-Thread 内核之间的约定。
  *
- * This header collects operations whose implementation depends on the CPU,
- * interrupt controller, cache hierarchy, exception model, or board console.
- * Kernel code calls these interfaces without knowing the underlying machine;
- * the selected CPU port or BSP provides the applicable implementation.
+ * 本头文件集中声明依赖 CPU、中断控制器、缓存层次、异常模型或开发板控制台的操作。
+ * 内核代码无需了解具体硬件即可调用这些接口；选定的 CPU 移植层或 BSP 必须提供相应实现。
  *
- * These APIs span early-boot, thread, interrupt, and exception contexts.
- * Callers must therefore obey the context and synchronization rules documented
- * for each group. Unless explicitly stated otherwise, address validity,
- * cache-line alignment, privilege, and inter-CPU synchronization remain the
- * caller's responsibility.
+ * 这些 API 可在早期启动、线程、中断和异常等上下文中使用。因此，调用者必须遵守各组
+ * 接口说明的上下文和同步规则。除非另有明确说明，地址有效性、缓存行对齐、权限和 CPU
+ * 间同步均由调用者负责。
  */
 
 #include <rtdef.h>
 
 #if defined (RT_USING_CACHE) || defined(RT_USING_SMP) || defined(RT_HW_INCLUDE_CPUPORT)
 /*
- * cpuport.h supplies architecture-native types and primitives such as
- * rt_hw_spinlock_t, cache barriers, and CPU-specific helpers. It is included
- * only when a selected feature needs that architecture contract.
+ * cpuport.h 提供架构专用类型和基础操作，例如 rt_hw_spinlock_t、缓存屏障及 CPU
+ * 专用辅助函数。仅当启用的功能需要这些架构约定时才包含该文件。
  */
 #include <cpuport.h>
 #endif
@@ -52,18 +47,15 @@ extern "C" {
 #endif
 
 /**
- * @name Memory-mapped register accessors
+ * @name 内存映射寄存器访问器
  *
- * Each macro converts an integer address to a pointer of the requested width,
- * applies volatile semantics, and dereferences it. The result is an lvalue, so
- * both reads and writes are possible, for example
+ * 每个宏都会把整数地址转换为指定宽度的指针，赋予 volatile 语义后解引用。结果是左值，
+ * 因而既可读也可写，例如
  * `HWREG32(base + offset) = value`.
  *
- * Volatile prevents the compiler from removing or coalescing the individual
- * access, but it is not a CPU memory barrier and provides no inter-CPU
- * synchronization. The caller must guarantee a valid, suitably aligned
- * address and a device that supports the chosen access width. A BSP may
- * override these macros before including this header.
+ * volatile 可阻止编译器删除或合并单次访问，但它不是 CPU 内存屏障，也不提供 CPU 间
+ * 同步。调用者必须保证地址有效且满足对齐要求，并确保设备支持所选访问宽度。BSP 可在
+ * 包含本头文件前重定义这些宏。
  * @{
  */
 #ifndef HWREG64
@@ -81,39 +73,34 @@ extern "C" {
 /** @} */
 
 /**
- * Default cache-line-size hint for ports or callers that choose to use this
- * macro for alignment and cache-maintenance calculations.  The current common
- * tree does not consume it automatically.  A user of the hint must override
- * it when the actual coherency granule is not 32 bytes.
+ * 供移植层或调用者用于对齐和缓存维护计算的默认缓存行大小提示。当前公共代码不会自动
+ * 使用它；实际一致性粒度不是 32 字节时，使用此提示的一方必须重定义该值。
  */
 #ifndef RT_CPU_CACHE_LINE_SZ
 #define RT_CPU_CACHE_LINE_SZ    32
 #endif
 
 /**
- * Operation selector passed to instruction/data cache maintenance APIs.
- * Values occupy independent bits, but support for a combined flush/invalidate
- * request is port-specific; callers should not assume every port accepts it.
+ * 传给指令/数据缓存维护 API 的操作选择值。这些值占用相互独立的位，但是否支持同时
+ * 刷新和失效取决于移植层；调用者不能假定所有移植层都接受该组合。
  */
 enum RT_HW_CACHE_OPS
 {
-    /** Write back dirty cache lines so later observers see current memory. */
+    /** 回写脏缓存行，使后续观察者能看到当前内存内容。 */
     RT_HW_CACHE_FLUSH      = 0x01,
-    /** Discard cached lines so subsequent reads fetch current memory. */
+    /** 丢弃缓存行，使后续读取从内存获取当前内容。 */
     RT_HW_CACHE_INVALIDATE = 0x02,
 };
 
 /**
- * @name CPU cache interfaces
+ * @name CPU 缓存接口
  *
- * Enable, disable, and status operations are architecture services. Range
- * operations apply @p ops to the byte interval starting at @p addr and
- * extending for @p size bytes; ports commonly round the interval to complete
- * cache lines. Callers coordinating with DMA must choose the operation required
- * by the transfer direction and arrange any required memory barriers.
+ * 启用、停用和状态查询是架构服务。范围操作把 @p ops 应用于从 @p addr 开始、长度为
+ * @p size 字节的区间；移植层通常会把范围扩展到完整缓存行。与 DMA 协作时，调用者必须
+ * 按传输方向选择操作，并安排所需的内存屏障。
  *
- * When RT_USING_CACHE is disabled, maintenance calls become no-op macros and
- * status reads return zero. Arguments to a no-op macro are not evaluated.
+ * 禁用 RT_USING_CACHE 时，维护调用会变为无操作宏，状态读取返回零；无操作宏的参数
+ * 不会被求值。
  * @{
  */
 #ifdef RT_USING_CACHE
@@ -122,34 +109,32 @@ enum RT_HW_CACHE_OPS
 #include <cache.h>
 #endif
 
-/** Enable the instruction cache using the CPU port's required sequencing. */
+/** 按 CPU 移植层要求的顺序启用指令缓存。 */
 void rt_hw_cpu_icache_enable(void);
-/** Disable the instruction cache, performing any port-required maintenance. */
+/** 停用指令缓存，并执行移植层要求的维护操作。 */
 void rt_hw_cpu_icache_disable(void);
 /**
- * Query instruction-cache enable state as implemented by the CPU port.
- * Some existing ports provide a placeholder that always returns zero, so this
- * must not be used as a cross-architecture proof that the cache is disabled.
+ * 查询 CPU 移植层实现的指令缓存启用状态。现有部分移植层仅提供始终返回零的占位实现，
+ * 因此不能据此跨架构证明缓存已停用。
  */
 rt_base_t rt_hw_cpu_icache_status(void);
-/** Apply @p ops to instructions cached for range [@p addr, @p addr + @p size). */
+/** 对范围 [@p addr, @p addr + @p size) 内已缓存的指令执行 @p ops。 */
 void rt_hw_cpu_icache_ops(int ops, void* addr, int size);
 
-/** Enable the data cache using the CPU port's required sequencing. */
+/** 按 CPU 移植层要求的顺序启用数据缓存。 */
 void rt_hw_cpu_dcache_enable(void);
-/** Disable the data cache, performing any port-required writeback/maintenance. */
+/** 停用数据缓存，并执行移植层要求的回写/维护操作。 */
 void rt_hw_cpu_dcache_disable(void);
 /**
- * Query data-cache enable state as implemented by the CPU port.  Some ports
- * currently return zero unconditionally even when maintenance operations are
- * implemented; interpret the result only under that port's documented contract.
+ * 查询 CPU 移植层实现的数据缓存启用状态。部分移植层即使实现了维护操作仍无条件返回零；
+ * 只能按该移植层文档约定解释此结果。
  */
 rt_base_t rt_hw_cpu_dcache_status(void);
-/** Apply @p ops to data cached for range [@p addr, @p addr + @p size). */
+/** 对范围 [@p addr, @p addr + @p size) 内已缓存的数据执行 @p ops。 */
 void rt_hw_cpu_dcache_ops(int ops, void* addr, int size);
 #else
 
-/* Cacheless build: preserve the API at zero run-time and evaluation cost. */
+/* 无缓存构建：以零运行时开销和零参数求值成本保留 API。 */
 #define rt_hw_cpu_icache_enable(...)
 #define rt_hw_cpu_icache_disable(...)
 #define rt_hw_cpu_icache_ops(...)
@@ -164,47 +149,41 @@ void rt_hw_cpu_dcache_ops(int ops, void* addr, int size);
 /** @} */
 
 /**
- * @brief Reset the processor or complete platform.
+ * @brief 复位处理器或整个硬件平台。
  *
- * This is normally a BSP/SoC service and commonly does not return. It may be
- * called from recovery code, so an implementation should not require ordinary
- * thread scheduling to remain operational.
+ * 这通常是 BSP/SoC 服务，常常不会返回。它可能由恢复代码调用，因此实现不应依赖普通
+ * 线程调度仍能正常工作。
  */
 void rt_hw_cpu_reset(void);
 
 /**
- * @brief Put the processor or platform into its shutdown state.
+ * @brief 使处理器或硬件平台进入关闭状态。
  *
- * The exact behavior is board-specific: power-off, firmware handoff, or a
- * permanent low-power loop are all possible. Implementations normally do not
- * return when the hardware supports shutdown.
+ * 具体行为由开发板决定：可能关机、移交给固件，或永久停留在低功耗循环中。硬件支持关闭时，
+ * 实现通常不会返回。
  */
 void rt_hw_cpu_shutdown(void);
 
 /**
- * @brief Return a textual description of the active CPU architecture.
- * @return Pointer to a persistent, read-only string owned by the CPU port.
+ * @brief 返回当前 CPU 架构的文本说明。
+ * @return 指向 CPU 移植层拥有的持久只读字符串的指针。
  */
 const char *rt_hw_cpu_arch(void);
 
 /**
- * @brief Construct the initial saved context on a new thread's stack.
+ * @brief 在新线程的栈上构造初始保存上下文。
  *
- * The scheduler calls this while initializing a thread. The port lays out a
- * synthetic exception/context frame so the first restore starts at @p entry
- * with @p parameter. If the entry function returns, its saved return address
- * must transfer control to @p exit.
+ * 调度器初始化线程时调用本函数。移植层会布置一个模拟的异常/上下文帧，使第一次恢复时从
+ * @p entry 开始执行并传入 @p parameter。若入口函数返回，其保存的返回地址必须转到
+ * @p exit。
  *
- * @param entry Thread entry address, kept untyped for assembly-compatible ABI.
- * @param parameter Argument to present to the thread entry function.
- * @param stack_addr Initial stack address selected by generic thread code; the
- *                   precise top/bottom convention follows the CPU port.
- * @param exit Cleanup trampoline invoked if the entry function returns.
- * @return Saved stack pointer stored in the thread control block and consumed
- *         by the corresponding context-switch implementation.
+ * @param entry 线程入口地址；为兼容汇编 ABI 而保持无类型。
+ * @param parameter 传给线程入口函数的参数。
+ * @param stack_addr 通用线程代码选定的初始栈地址；栈顶/栈底的精确约定由 CPU 移植层决定。
+ * @param exit 入口函数返回时调用的清理跳板。
+ * @return 存入线程控制块并由对应上下文切换实现使用的保存栈指针。
  *
- * @note Stack alignment, register ordering, status-register contents, and
- *       privilege state form an ABI shared with the port's assembly code.
+ * @note 栈对齐、寄存器顺序、状态寄存器内容和权限状态共同构成与移植层汇编代码共享的 ABI。
  */
 rt_uint8_t *rt_hw_stack_init(void       *entry,
                              void       *parameter,
@@ -213,69 +192,64 @@ rt_uint8_t *rt_hw_stack_init(void       *entry,
 
 #ifdef RT_USING_HW_STACK_GUARD
 /**
- * @brief Program the architecture's hardware stack guard for @p thread.
+ * @brief 为 @p thread 配置架构提供的硬件栈保护。
  *
- * An implementation may configure an MPU region, limit register, or another
- * hardware overflow-detection mechanism. The supplied thread must already
- * have a valid stack range.
+ * 实现可配置 MPU 区域、限制寄存器或其他硬件溢出检测机制。传入的线程必须已有有效栈范围。
  */
 void rt_hw_stack_guard_init(rt_thread_t thread);
 #endif
 
 /**
- * Interrupt service routine signature used by the generic interrupt API.
+ * 通用中断 API 使用的中断服务例程函数签名。
  *
- * @param vector Interrupt/vector number delivered by the controller.
- * @param param Opaque argument registered with rt_hw_interrupt_install().
+ * @param vector 控制器送达的中断/向量编号。
+ * @param param 使用 rt_hw_interrupt_install() 注册的不透明参数。
  *
- * The callback runs in interrupt context. It must use interrupt-safe APIs,
- * avoid blocking, and keep execution bounded. Architecture entry/exit code is
- * responsible for RT-Thread's interrupt nesting protocol.
+ * 回调在中断上下文运行，必须使用中断安全 API、避免阻塞，并限制执行时间。架构的中断入口/退出
+ * 代码负责实现 RT-Thread 的中断嵌套协议。
  */
 typedef void (*rt_isr_handler_t)(int vector, void *param);
 
-/** Descriptor maintained by an interrupt-controller implementation. */
+/** 由中断控制器实现维护的描述符。 */
 struct rt_irq_desc
 {
-    rt_isr_handler_t handler; /**< Installed ISR, or the port's default handler. */
-    void            *param;   /**< Opaque value passed to @ref handler. */
+    rt_isr_handler_t handler; /**< 已安装的 ISR，或移植层的默认处理函数。 */
+    void            *param;   /**< 传给 @ref handler 的不透明值。 */
 
 #ifdef RT_USING_INTERRUPT_INFO
-    char             name[RT_NAME_MAX]; /**< Diagnostic vector name. */
-    rt_uint32_t      counter;            /**< Aggregate dispatch count. */
+    char             name[RT_NAME_MAX]; /**< 用于诊断的向量名称。 */
+    rt_uint32_t      counter;            /**< 累计分发次数。 */
 #ifdef RT_USING_SMP
-    /** Per-CPU dispatch counts used to diagnose interrupt affinity/load. */
+    /** 用于诊断中断亲和性和负载的各 CPU 分发次数。 */
     rt_ubase_t       cpu_counter[RT_CPUS_NR];
 #endif
 #endif
 };
 
 /**
- * @name Interrupt-controller interfaces
+ * @name 中断控制器接口
  *
- * The BSP initializes its vector table/controller, controls individual vector
- * delivery, and records handlers through this group. Vector numbering and
- * invalid-vector behavior are controller-specific.
+ * BSP 通过本组接口初始化向量表/控制器、控制单个向量的投递并记录处理函数。向量编号及非法
+ * 向量的处理方式由控制器决定。
  * @{
  */
-/** Initialize the interrupt subsystem before drivers install their ISRs. */
+/** 在驱动安装 ISR 前初始化中断子系统。 */
 void rt_hw_interrupt_init(void);
 
-/** Prevent delivery of @p vector at the interrupt controller. */
+/** 在中断控制器中阻止投递 @p vector。 */
 void rt_hw_interrupt_mask(int vector);
 
-/** Permit delivery of @p vector at the interrupt controller. */
+/** 在中断控制器中允许投递 @p vector。 */
 void rt_hw_interrupt_umask(int vector);
 
 /**
- * @brief Install @p handler and opaque @p param for @p vector.
- * @param vector Interrupt number understood by the active controller.
- * @param handler Interrupt-context callback to associate with the vector.
- * @param param Opaque callback argument; its storage must outlive registration.
- * @param name Diagnostic label used when interrupt statistics are enabled.
- * @return Previously installed handler according to the port convention,
- *         commonly RT_NULL when no user handler was present.
- * @note Installing a handler does not necessarily unmask its interrupt source.
+ * @brief 为 @p vector 安装 @p handler 和不透明参数 @p param。
+ * @param vector 当前控制器可识别的中断编号。
+ * @param handler 要与该向量关联的中断上下文回调。
+ * @param param 不透明回调参数；其存储期必须长于注册期。
+ * @param name 启用中断统计时使用的诊断标签。
+ * @return 按移植层约定返回之前安装的处理函数；通常无用户处理函数时返回 RT_NULL。
+ * @note 安装处理函数不一定会解除该中断源的屏蔽。
  */
 rt_isr_handler_t rt_hw_interrupt_install(int              vector,
                                          rt_isr_handler_t handler,
@@ -283,16 +257,14 @@ rt_isr_handler_t rt_hw_interrupt_install(int              vector,
                                          const char      *name);
 
 /**
- * @brief Remove a matching interrupt registration.
+ * @brief 移除匹配的中断注册。
  *
- * Both @p handler and @p param identify the registration in implementations
- * that support checked or shared uninstall. Before reclaiming callback data,
- * the caller must mask the source and synchronize with in-flight handlers as
- * required by the selected interrupt controller.
+ * 在支持检查或共享卸载的实现中，@p handler 和 @p param 共同标识该注册。回收回调数据前，
+ * 调用者必须屏蔽中断源，并按所选中断控制器要求与正在执行的处理函数同步。
  *
- * @param vector Interrupt number whose registration is being removed.
- * @param handler Previously registered callback, used when the port verifies it.
- * @param param Previously registered opaque argument or shared-IRQ identity.
+ * @param vector 要移除注册的中断编号。
+ * @param handler 先前注册的回调；移植层验证时会使用它。
+ * @param param 先前注册的不透明参数或共享 IRQ 标识。
  */
 void rt_hw_interrupt_uninstall(int              vector,
                                rt_isr_handler_t handler,
@@ -301,253 +273,206 @@ void rt_hw_interrupt_uninstall(int              vector,
 
 #ifdef RT_USING_SMP
 /**
- * @brief Disable interrupts only on the calling CPU.
- * @return Previous local hardware interrupt state. Pass this exact value to
- *         rt_hw_local_irq_enable() to preserve nesting and prior mask state.
+ * @brief 仅在调用 CPU 时禁用中断。
+ * @return 先前的本地硬件中断状态。将此精确值传递给 rt_hw_local_irq_enable() 以保留嵌套和先前的掩码状态。
  */
 rt_base_t rt_hw_local_irq_disable(void);
 
-/** Restore the calling CPU's interrupt state saved by local_irq_disable(). */
+/** 恢复local_irq_disable()保存的调用CPU的中断状态。 */
 void rt_hw_local_irq_enable(rt_base_t level);
 
 /**
- * @brief Enter the SMP-wide CPU critical section.
- * @return Prior local interrupt state for rt_cpus_unlock().
+ * @brief 输入 SMP 范围的 CPU 临界区。
+ * @return rt_cpus_unlock()之前的本地中断状态。
  *
- * With a current thread, the common implementation combines the global CPU
- * spinlock (nested per thread) with local interrupt/scheduler exclusion.  In
- * early boot or another context with no current thread, it only disables local
- * interrupts and does not acquire the global spinlock.  Callers must not assume
- * cross-CPU exclusion in that special context.
+ * 对于当前线程，常见实现将全局 CPU spinlock（每个线程嵌套）与本地中断/调度程序排除相结合。  在早期启动或没有当前线程的其他上下文中，它仅禁用本地中断并且不获取全局自旋锁。  调用者不得在该特殊上下文中假设跨 CPU 排除。
  */
 rt_base_t rt_cpus_lock(void);
 
-/** Leave the SMP-wide critical section and restore saved interrupt state. */
+/** 离开 SMP 范围的临界区并恢复保存的中断状态。 */
 void rt_cpus_unlock(rt_base_t level);
 
-/* Generic kernel critical sections use the SMP-wide lock in an SMP build. */
+/* 通用内核关键部分在 SMP 构建中使用 SMP 范围的锁。 */
 #define rt_hw_interrupt_disable rt_cpus_lock
 #define rt_hw_interrupt_enable rt_cpus_unlock
 #else
 /**
- * @brief Disable maskable interrupts on a uniprocessor.
- * @return Previous interrupt state, which must later be restored verbatim.
+ * @brief 禁用单处理器上的可屏蔽中断。
+ * @return 先前的中断状态，稍后必须逐字恢复。
  *
- * Nested critical sections work by saving each returned state and restoring
- * them in LIFO order. A caller must not replace restoration with an unconditional
- * hardware enable, because interrupts may already have been disabled on entry.
+ * 嵌套关键部分通过保存每个返回的状态并按 LIFO 顺序恢复它们来工作。调用者不得用无条件硬件使能来代替恢复，因为中断可能已经在进入时被禁用。
  */
 rt_base_t rt_hw_interrupt_disable(void);
 
-/** Restore the interrupt state returned by rt_hw_interrupt_disable(). */
+/** 恢复rt_hw_interrupt_disable()返回的中断状态。 */
 void rt_hw_interrupt_enable(rt_base_t level);
 
-/* On UP, local and generic interrupt exclusion are the same operation. */
+/* 在UP上，本地和通用中断排除是相同的操作。 */
 #define rt_hw_local_irq_disable rt_hw_interrupt_disable
 #define rt_hw_local_irq_enable rt_hw_interrupt_enable
 
 #endif /*RT_USING_SMP*/
 
 /**
- * Query whether maskable interrupts are disabled on the calling CPU.
+ * 查询调用CPU是否禁止可屏蔽中断。
  *
- * A CPU port should override the weak generic implementation when an accurate
- * query is available.  The weak default returns RT_FALSE, so callers must not
- * treat this routine as a hardware-status guarantee on an unimplemented port.
+ * 当准确查询可用时，CPU 端口应覆盖弱通用实现。  弱默认返回 RT_FALSE，因此调用者不得将此例程视为未实现端口上的硬件状态保证。
  *
- * @return Port-reported disabled state, or RT_FALSE from the weak fallback.
+ * @return 端口报告禁用状态，或来自弱回退的 RT_FALSE。
  */
 rt_bool_t rt_hw_interrupt_is_disabled(void);
 
 /**
- * @name Architecture context-switch interfaces
+ * @name 架构上下文切换接口
  *
- * These routines are implemented by the CPU port, often in assembly. @p from
- * and @p to identify locations associated with saved stack pointers rather
- * than ordinary stack values; their exact representation is the ABI shared by
- * scheduler and port. The `*_to` form starts the first thread and has no
- * outgoing context. The `*_interrupt` form requests or performs a switch from
- * interrupt context using the port's immediate or deferred-switch mechanism.
+ * 这些例程由 CPU 端口实现，通常在汇编中。 @p from 和 @p to 标识与保存的堆栈指针而不是普通堆栈值相关的位置；它们的确切表示是调度程序和端口共享的 ABI。 `*_to` 形式启动第一个线程并且没有传出上下文。 `*_interrupt` 使用端口的立即或延迟切换机制请求或执行来自中断上下文的切换。
  *
- * Callers must not use these as general thread APIs. Scheduler locking,
- * interrupt nesting, FPU state, address-space switching, and whether a first
- * switch returns are all architecture-sensitive.
+ * 调用者不得将它们用作通用线程 API。调度程序锁定、中断嵌套、FPU 状态、地址空间切换以及第一个切换是否返回都是架构敏感的。
  * @{
  */
 #ifdef RT_USING_SMP
-/* SMP ports receive the incoming TCB for CPU/address-space bookkeeping. */
-/** Save the outgoing thread context at @p from and restore @p to in thread context. */
+/* SMP 端口接收传入的 TCB 以进行 CPU/地址空间簿记。 */
+/** 将传出线程上下文保存在 @p from 并在线程上下文中恢复 @p to。 */
 void rt_hw_context_switch(rt_ubase_t from, rt_ubase_t to, struct rt_thread *to_thread);
-/** Restore the first runnable context at @p to; there is no outgoing thread. */
+/** 恢复 @p to 处的第一个可运行上下文；没有传出线程。 */
 void rt_hw_context_switch_to(rt_ubase_t to, struct rt_thread *to_thread);
 /**
- * Switch/defer from interrupt context described by @p context, saving @p from
- * and selecting @p to as the incoming saved stack context.
+ * 从 @p context 描述的中断上下文切换/延迟，保存 @p from 并选择 @p to 作为传入保存的堆栈上下文。
  */
 void rt_hw_context_switch_interrupt(void *context, rt_ubase_t from, rt_ubase_t to, struct rt_thread *to_thread);
 #else
-/** Save the outgoing thread context at @p from and restore @p to in thread context. */
+/** 将传出线程上下文保存在 @p from 并在线程上下文中恢复 @p to。 */
 void rt_hw_context_switch(rt_ubase_t from, rt_ubase_t to);
-/** Restore the first runnable context at @p to; there is no outgoing thread. */
+/** 恢复 @p to 处的第一个可运行上下文；没有传出线程。 */
 void rt_hw_context_switch_to(rt_ubase_t to);
 /**
- * Switch/defer in interrupt context. TCB arguments let the port inspect state
- * belonging to the outgoing and incoming threads in addition to their saved
- * stack-context locations @p from and @p to.
+ * 在中断上下文中切换/延迟。 TCB 参数允许端口检查属于传出和传入线程的状态以及保存的堆栈上下文位置 @p from 和 @p to。
  */
 void rt_hw_context_switch_interrupt(rt_ubase_t from, rt_ubase_t to, rt_thread_t from_thread, rt_thread_t to_thread);
 #endif /*RT_USING_SMP*/
 /** @} */
 
 /**
- * @brief Minimal machine state needed to walk one stack frame.
+ * @brief 行走一个堆栈帧所需的最小机器状态。
  *
- * A port may interpret @ref fp as a frame pointer, stack cursor, or another
- * unwind cookie. Callers must treat both fields as opaque inputs to the next
- * unwind operation.
+ * 端口可以将 @ref fp 解释为帧指针、堆栈游标或其他展开 cookie。调用者必须将这两个字段视为下一个展开操作的不透明输入。
  */
 struct rt_hw_backtrace_frame {
-    rt_uintptr_t fp; /**< Architecture-defined frame/unwind cursor. */
-    rt_uintptr_t pc; /**< Program counter represented by this frame. */
+    rt_uintptr_t fp; /**< 架构定义的框架/展开光标。 */
+    rt_uintptr_t pc; /**< 此帧表示的程序计数器。 */
 };
 
 /**
- * @brief Obtain the first unwind frame for @p thread.
- * @param thread Target thread; support for a currently executing thread on
- *               another CPU is architecture-specific.
- * @param frame Output frame initialized on success.
- * @return RT_EOK on success, or a negative error when no frame is available.
+ * @brief 获取@p thread的第一个放卷帧。
+ * @param thread 目标线程；对另一个 CPU 上当前正在执行的线程的支持是特定于体系结构的。
+ * @param frame 成功时初始化输出帧。
+ * @return RT_EOK 表示成功，或者当没有可用帧时出现负错误。
  */
 rt_err_t rt_hw_backtrace_frame_get(rt_thread_t thread, struct rt_hw_backtrace_frame *frame);
 
 /**
- * @brief Advance @p frame to its caller frame.
- * @return RT_EOK if another frame was produced; a negative error marks the end
- *         of the trace or an invalid/unwindable stack.
+ * @brief 将 @p frame 前进到其调用者框架。
+ * @return RT_EOK（如果生产了另一个框架）；负错误标记跟踪的结束或无效/不可展开的堆栈。
  */
 rt_err_t rt_hw_backtrace_frame_unwind(rt_thread_t thread, struct rt_hw_backtrace_frame *frame);
 
 /**
- * @brief Write a NUL-terminated string to the BSP's lowest-level console.
+ * @brief 将 NUL 结尾的字符串写入 BSP 的最低级控制台。
  *
- * Kernel formatted output ultimately uses this backend. It may be reached
- * before full device initialization or from diagnostics. Whether it is safe in
- * an ISR and whether concurrent output is serialized are BSP-specific.
+ * 内核格式化输出最终使用此后端。它可以在完整设备初始化之前或通过诊断达到。 ISR 中是否安全以及并发输出是否串行化是 BSP 特定的。
  */
 void rt_hw_console_output(const char *str);
 
 /**
- * @brief Display memory beginning at machine address @p addr.
- * @param size Requested display length/count; its unit and rounding are defined
- *             by the architecture implementation.
- * @note Intended for low-level diagnostics. The caller is responsible for
- *       address validity, permissions, alignment, and possible access faults.
+ * @brief 显示从机器地址@p addr 开始的内存。
+ * @param size 请求显示长度/计数；它的单位和舍入由架构实现定义。
+ * @note 用于低级诊断。调用者负责地址有效性、权限、对齐以及可能的访问错误。
  */
 void rt_hw_show_memory(rt_uint32_t addr, rt_size_t size);
 
 /**
- * @brief Install the architecture exception callback hook.
+ * @brief 安装架构异常回调钩子。
  *
- * On ports that implement exception-hook dispatch, this registers
- * @p exception_handle for an architecture-specific saved exception context.
- * Whether the callback is retained or invoked, the context representation,
- * interpretation of its rt_err_t result, and RT_NULL behavior are all
- * CPU-port-specific; some ports provide only a compatibility stub.  A callback
- * that is actually dispatched runs in exception context, must not block, and
- * must not retain a pointer to a transient frame.
+ * 在实现异常挂钩分派的端口上，该寄存器
+ * @p exception_handle 用于特定于体系结构的已保存异常上下文。无论回调是保留还是调用，上下文表示、其 rt_err_t 结果的解释以及 RT_NULL 行为都是 CPU 端口特定的；某些端口仅提供兼容性存根。  实际调度的回调在异常上下文中运行，不得阻塞，也不得保留指向瞬态帧的指针。
  */
 void rt_hw_exception_install(rt_err_t (*exception_handle)(void *context));
 
 /**
- * @brief Request an approximately @p us microsecond hardware delay.
+ * @brief 请求大约 @p us 微秒的硬件延迟。
  *
- * A BSP implementation normally provides a calibrated busy wait suitable for
- * short hardware timing and early boot.  The weak generic fallback does not
- * delay: it logs an unsupported-operation warning and returns.  Code that
- * requires timing correctness must therefore ensure the active BSP overrides
- * this symbol; accuracy and maximum practical interval are BSP-specific.
+ * BSP 实现通常提供适合短硬件时序和早期启动的校准忙等待。  弱通用回退不会延迟：它记录不支持的操作警告并返回。  因此，需要时序正确性的代码必须确保活动的 BSP 覆盖该符号；精度和最大实际间隔是 BSP 特定的。
  */
 void rt_hw_us_delay(rt_uint32_t us);
 
 /**
- * @return Logical ID of the calling CPU in the range expected by RT-Thread.
- *         A uniprocessor port normally returns zero.
+ * @return 调用 CPU 的逻辑 ID，在 RT-Thread 预期的范围内。单处理器端口通常返回零。
  */
 int rt_hw_cpu_id(void);
 
 #if defined(RT_USING_SMP) || defined(RT_USING_AMP)
 /**
- * @brief Send an inter-processor interrupt to selected CPUs.
- * @param ipi_vector Architecture/controller-specific IPI vector number.
- * @param cpu_mask Bit mask of destination logical CPUs; bit N selects CPU N.
+ * @brief 向选定的 CPU 发送处理器间中断。
+ * @param ipi_vector 架构/控制器特定的 IPI 向量编号。
+ * @param cpu_mask 目标逻辑CPU的位掩码；位 N 选择 CPU N。
  *
- * This operation raises the interrupt only. The associated handler and memory
- * ordering for data published before the IPI belong to the SMP/AMP subsystem
- * and CPU port.
+ * 该操作仅引发中断。在 IPI 之前发布的数据的关联处理程序和内存排序属于 SMP/AMP 子系统和 CPU 端口。
  */
 void rt_hw_ipi_send(int ipi_vector, unsigned int cpu_mask);
 #endif
 
 #ifdef RT_USING_SMP
 
-/** Initialize a hardware spin lock to its unlocked state. */
+/** 将硬件自旋锁初始化为其解锁状态。 */
 void rt_hw_spin_lock_init(rt_hw_spinlock_t *lock);
 
 /**
- * @brief Acquire @p lock, spinning until ownership is obtained.
+ * @brief 获取@p lock，旋转直至获得所有权。
  *
- * Interrupt-state handling is not implied by this primitive; callers must use
- * the IRQ/scheduler locking protocol required for the protected data. Spin
- * locks are not sleeping locks and must protect only bounded critical sections.
+ * 该原语不暗示中断状态处理；调用者必须使用受保护数据所需的 IRQ/调度程序锁定协议。自旋锁不是睡眠锁，必须仅保护有界的关键部分。
  */
 void rt_hw_spin_lock(rt_hw_spinlock_t *lock);
 
-/** Release @p lock and publish protected writes according to the port ABI. */
+/** 释放@p lock，并根据端口ABI发布受保护的写入。 */
 void rt_hw_spin_unlock(rt_hw_spinlock_t *lock);
 
-/** Global hardware lock used by the generic SMP-wide CPU lock implementation. */
+/** 通用 SMP 范围的 CPU 锁实现使用的全局硬件锁。 */
 extern rt_hw_spinlock_t _cpus_lock;
 
-/* Constant initializer for locks that exist before run-time initialization. */
+/* 运行时初始化之前存在的锁的常量初始值设定项。 */
 #define __RT_HW_SPIN_LOCK_INITIALIZER(lockname) {0}
 
-/** Produce a typed unlocked initializer expression for an SMP hardware lock. */
+/** 为 SMP 硬件锁生成类型化的未锁定初始化表达式。 */
 #define __RT_HW_SPIN_LOCK_UNLOCKED(lockname)    \
     (rt_hw_spinlock_t) __RT_HW_SPIN_LOCK_INITIALIZER(lockname)
 
-/** Define named hardware spin lock @p x with static unlocked initialization. */
+/** 定义具有静态解锁初始化的命名硬件自旋锁 @p x。 */
 #define RT_DEFINE_HW_SPINLOCK(x)  rt_hw_spinlock_t x = __RT_HW_SPIN_LOCK_UNLOCKED(x)
 
 /**
- * @brief Start configured secondary CPUs during SMP initialization.
+ * @brief 在 SMP 初始化期间启动配置的辅助 CPU。
  *
- * The BSP performs the platform-specific release-from-reset or firmware call
- * for configured secondary CPUs.  Individual bring-up attempts can fail or a
- * platform may leave a CPU offline; only successfully started CPUs enter the
- * RT-Thread secondary-CPU path.
+ * BSP 为配置的辅助 CPU 执行特定于平台的复位释放或固件调用。  单独的启动尝试可能会失败，或者平台可能会使 CPU 处于离线状态；只有成功启动的 CPU 才会进入 RT-Thread secondary-CPU 路径。
  */
 void rt_hw_secondary_cpu_up(void);
 
 /**
- * @brief Execute the architecture idle operation on a secondary CPU.
+ * @brief 在辅助 CPU 上执行架构空闲操作。
  *
- * This is normally called from the secondary idle path and is commonly a
- * wait-for-interrupt instruction plus required platform bookkeeping.
+ * 这通常从辅助空闲路径调用，并且通常是等待中断指令加上所需的平台簿记。
  */
 void rt_hw_secondary_cpu_idle_exec(void);
 
 #else /* !RT_USING_SMP */
 
 /*
- * UP compatibility form: storage holds the interrupt state saved on lock.
- * It is not an inter-CPU lock, and the same variable must be supplied to the
- * matching unlock so the exact prior interrupt state can be restored.
+ * UP 兼容形式：存储保存锁上保存的中断状态。它不是 CPU 间的锁定，并且必须向匹配的解锁提供相同的变量，以便可以恢复准确的先前中断状态。
  */
 #define RT_DEFINE_HW_SPINLOCK(x)    rt_ubase_t x
 
-/** Save interrupt state into @p lock and exclude local interrupt concurrency. */
+/** 将中断状态保存到 @p lock 中并排除本地中断并发。 */
 #define rt_hw_spin_lock(lock)     *(lock) = rt_hw_interrupt_disable()
-/** Restore the interrupt state previously stored by rt_hw_spin_lock(). */
+/** 恢复rt_hw_spin_lock()之前存储的中断状态。 */
 #define rt_hw_spin_unlock(lock)   rt_hw_interrupt_enable(*(lock))
 
 
@@ -555,17 +480,13 @@ void rt_hw_secondary_cpu_idle_exec(void);
 
 #ifndef RT_USING_CACHE
     /*
-     * This configuration branch supplies compatibility no-ops so generic code
-     * can compile without RT_USING_CACHE.  Cache configuration is not, by
-     * itself, proof that the CPU needs no ordering barrier.  A port that needs
-     * real ordering must arrange the appropriate architecture definitions and
-     * feature configuration instead of relying on these fallbacks.
-     */
-    /** Compatibility no-op in this configuration; not a hardware ordering guarantee. */
+ * 此配置分支提供兼容性无操作，因此通用代码可以在没有 RT_USING_CACHE 的情况下进行编译。  缓存配置本身并不能证明 CPU 不需要排序障碍。  需要真正排序的端口必须安排适当的架构定义和功能配置，而不是依赖这些后备。
+ */
+    /** 此配置中的兼容性无操作；不是硬件订购保证。 */
     #define rt_hw_isb()
-    /** Compatibility no-op in this configuration; not a hardware ordering guarantee. */
+    /** 此配置中的兼容性无操作；不是硬件订购保证。 */
     #define rt_hw_dmb()
-    /** Compatibility no-op in this configuration; not a hardware ordering guarantee. */
+    /** 此配置中的兼容性无操作；不是硬件订购保证。 */
     #define rt_hw_dsb()
 #endif /* RT_USING_CACHE */
 

@@ -3,15 +3,23 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2024-12-25     Meco Man     first version
+ * 修改记录：
+ * 日期           作者         说明
+ * 2024-12-25     Meco Man     首个版本
+ */
+
+/**
+ * @file TC_rt_memmove.c
+ * @brief 验证 rt_memmove() 的普通复制、双向重叠、零长度和空字符串行为。
+ *
+ * memmove 与 memcpy 的关键区别是重叠安全：目标落在源后方时必须从尾部向前复制，
+ * 目标在源前方时可从头向后复制。零长度用例还验证实现不会解引用源/目标地址。
  */
 
 #include <rtthread.h>
 #include <utest.h>
 
-/* Basic move with no overlap */
+/* 基本非重叠移动，并把字符串终止符一起复制。 */
 static void TC_rt_memmove_basic(void)
 {
     char src[] = "Hello";
@@ -20,7 +28,7 @@ static void TC_rt_memmove_basic(void)
     uassert_str_equal(dest, "Hello");
 }
 
-/* Move with overlap (src before dest) */
+/* 源在前、目标落入源区：必须逆向复制，不能覆盖尚未读取的源字节。 */
 static void TC_rt_memmove_overlap_src_before(void)
 {
     char buffer[] = "1234567890";
@@ -28,7 +36,7 @@ static void TC_rt_memmove_overlap_src_before(void)
     uassert_str_equal(buffer, "1231234590");
 }
 
-/* Move with overlap (src after dest) */
+/* 源在后、目标在前：正向复制即可安全得到期望结果。 */
 static void TC_rt_memmove_overlap_src_after(void)
 {
     char buffer[] = "1234567890";
@@ -36,7 +44,7 @@ static void TC_rt_memmove_overlap_src_after(void)
     uassert_str_equal(buffer, "1267890890");
 }
 
-/* Move with zero length */
+/* 长度为 0 时目标内容保持不变。 */
 static void TC_rt_memmove_zero_length(void)
 {
     char src[] = "Hello";
@@ -45,7 +53,7 @@ static void TC_rt_memmove_zero_length(void)
     uassert_str_equal(dest, "World");
 }
 
-/* Move to the same location */
+/* 源和目标完全相同应成为无副作用操作。 */
 static void TC_rt_memmove_same_location(void)
 {
     char buffer[] = "Hello";
@@ -53,45 +61,49 @@ static void TC_rt_memmove_same_location(void)
     uassert_str_equal(buffer, "Hello");
 }
 
-/* Move from NULL */
+/* 长度为 0 时允许传入空源，因为循环不会解引用它。 */
 static void TC_rt_memmove_null_src(void)
 {
     char dest[10];
     rt_memset(dest, 'A', sizeof(dest));
-    rt_memmove(dest, RT_NULL, 0); /* Should not crash and do nothing */
+    rt_memmove(dest, RT_NULL, 0); /* 不应崩溃，也不应修改目标。 */
     uassert_buf_equal(dest, "AAAAAAAAAA", 10);
 }
 
-/* Move to NULL */
+/* 长度为 0 时同样不解引用空目标。 */
 static void TC_rt_memmove_null_dest(void)
 {
     char src[] = "Hello";
-    rt_memmove(RT_NULL, src, 0); /* Should not crash and do nothing */
+    rt_memmove(RT_NULL, src, 0); /* 不应崩溃，也不执行写入。 */
 }
 
-/* Move more than source size */
+/*
+ * 此历史用例请求长度超过 src 数组：memmove 会严格复制给定长度，不知道字符串
+ * 边界，因此该调用在 C 语义上会读取 src 之外，属于未定义行为。它不能证明函数
+ * “只复制到源字符串末尾”；保留该用例仅用于记录当前测试集合的既有覆盖。
+ */
 static void TC_rt_memmove_too_long(void)
 {
     char src[] = "Short";
     char dest[10] = {0};
-    rt_memmove(dest, src, sizeof(src) + 5); /* Should only copy up to src length */
+    rt_memmove(dest, src, sizeof(src) + 5); /* 被测函数仍会尝试复制完整请求长度。 */
     uassert_str_equal(dest, "Short");
-    uassert_int_equal(dest[5], 0); /* Ensure no buffer overflow */
+    uassert_int_equal(dest[5], 0); /* 只检查终止符位置，不能证明源/目标均未越界。 */
 }
 
-/* Move empty string */
+/* 空字符串只需移动一个 '\0'，目标随即成为空 C 字符串。 */
 static void TC_rt_memmove_empty_string(void)
 {
     char src[] = "";
     char dest[10] = "Unchanged";
     rt_memmove(dest, src, rt_strlen(src) + 1);
 
-    /* Expect dest to only contain '\0' at the start */
-    uassert_str_equal(dest, "");  /* Destination should now be an empty string */
-    uassert_int_equal(dest[0], '\0'); /* First character should be '\0' */
+    /* 目标首字符应为 '\0'；其后的旧内容不影响字符串比较。 */
+    uassert_str_equal(dest, "");  /* 目标现在表示空字符串。 */
+    uassert_int_equal(dest[0], '\0'); /* 显式验证首字符就是终止符。 */
 }
 
-/* Utest function to run all test cases */
+/* 按固定顺序运行全部子用例，便于定位是哪一类地址关系失败。 */
 static void utest_do_tc(void)
 {
     UTEST_UNIT_RUN(TC_rt_memmove_basic);

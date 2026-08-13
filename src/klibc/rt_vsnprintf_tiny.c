@@ -3,9 +3,22 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2024-11-19     Meco Man     the first version
+ * 修改记录：
+ * 日期           作者         说明
+ * 2024-11-19     Meco Man     首个版本
+ */
+
+/**
+ * @file rt_vsnprintf_tiny.c
+ * @brief 面向资源受限系统的精简格式化输出后端。
+ *
+ * 本实现只处理字符、字符串、指针以及二/八/十/十六进制整数，目标是以较小代码
+ * 体积满足内核日志的常见需求。它会始终计算“完整结果本应具有的长度”，但只在
+ * `[buf, buf + size)` 范围内写入，并在 size 大于 0 时保证末尾有 '\0'。
+ *
+ * 与完整 C printf 相比，这个 tiny 后端有意省略浮点、`%n` 等功能，并且个别宽度和
+ * 精度细节并不完全遵循 ISO C。需要完整格式行为时应在配置中选择标准或 libc
+ * 后端。所有辅助函数只解析格式串或写调用者缓冲区，不分配堆内存。
  */
 
 #include <rtthread.h>
@@ -13,13 +26,16 @@
 #define _ISDIGIT(c)  ((unsigned)((c) - '0') < 10)
 
 /**
- * @brief  This function will duplicate a string.
+ * @brief 对无符号整数做一次“除基数并取余”。
  *
- * @param  n is the string to be duplicated.
+ * @param n 输入/输出整数：返回前被更新为原值除以 @p base 的商。
  *
- * @param  base is support divide instructions value.
+ * @param base 进制基数；本文件实际传入 2、8、10 或 16。
  *
- * @return the duplicated string pointer.
+ * @return 原值除以 @p base 的余数，即当前最低位数字。
+ *
+ * @details print_number() 反复调用本函数，从低位到高位提取数字。是否支持
+ *          long long 由配置决定；此函数名保留自传统内核 printf 实现。
  */
 #ifdef RT_KLIBC_USING_VSNPRINTF_LONGLONG
 rt_inline int divide(unsigned long long *n, int base)
@@ -29,7 +45,7 @@ rt_inline int divide(unsigned long *n, int base)
 {
     int res;
 
-    /* optimized for processor which does not support divide instructions. */
+    /* 把取余和更新商集中在一处，便于端口或编译器针对无硬件除法的 CPU 优化。 */
 #ifdef RT_KLIBC_USING_VSNPRINTF_LONGLONG
     res = (int)((*n) % base);
     *n = (long long)((*n) / base);
@@ -41,6 +57,12 @@ rt_inline int divide(unsigned long *n, int base)
     return res;
 }
 
+/**
+ * @brief 从格式串当前位置读取连续十进制数字。
+ *
+ * @param s 指向“格式串游标”的指针；返回后游标停在第一个非数字字符。
+ * @return 解析得到的非负整数。这里不检测 int 溢出，格式串应来自可信代码。
+ */
 rt_inline int skip_atoi(const char **s)
 {
     int i = 0;
@@ -50,13 +72,31 @@ rt_inline int skip_atoi(const char **s)
     return i;
 }
 
-#define ZEROPAD     (1 << 0)    /* pad with zero */
-#define SIGN        (1 << 1)    /* unsigned/signed long */
-#define PLUS        (1 << 2)    /* show plus */
-#define SPACE       (1 << 3)    /* space if plus */
-#define LEFT        (1 << 4)    /* left justified */
-#define SPECIAL     (1 << 5)    /* 0x */
-#define LARGE       (1 << 6)    /* use 'ABCDEF' instead of 'abcdef' */
+#define ZEROPAD     (1 << 0)    /* 字段不足时用 '0' 填充 */
+#define SIGN        (1 << 1)    /* 按有符号整数解释参数 */
+#define PLUS        (1 << 2)    /* 正数也显示 '+' */
+#define SPACE       (1 << 3)    /* 无正负号时在正数前放空格 */
+#define LEFT        (1 << 4)    /* 在字段宽度内左对齐 */
+#define SPECIAL     (1 << 5)    /* 输出 0、0x 或 0b 进制前缀 */
+#define LARGE       (1 << 6)    /* 十六进制使用大写 A～F */
+
+/**
+ * @brief 把一个整数按照给定进制、宽度和标志追加到输出游标。
+ *
+ * @param buf 当前逻辑写入位置。
+ * @param end 可写区域末尾（不含）；即使达到末尾，逻辑游标仍继续前进以统计总长度。
+ * @param num 待格式化数值。若 SIGN 置位，会依据 qualifier 转回相应有符号宽度。
+ * @param base 进制，当前支持 2、8、10、16。
+ * @param qualifier 整数长度修饰符：h、l、L 或默认宽度。
+ * @param s 最小字段宽度，负值表示未指定。
+ * @param precision 最小数字位数；负值表示未指定。
+ * @param type ZEROPAD、SIGN、PLUS、SPACE、LEFT、SPECIAL、LARGE 的组合。
+ * @return 更新后的逻辑输出游标，可能超过 @p end，但超过部分不会被解引用。
+ *
+ * @details 先确定符号和前缀，再把数值按“低位在前”写入临时数组；真正输出时反向
+ *          读取数组，得到正常数字顺序。字段宽度依次扣除符号、进制前缀、精度补零
+ *          和数字本身，剩余位置按对齐方向补空格或零。
+ */
 
 static char *print_number(char *buf,
                           char *end,
@@ -94,7 +134,7 @@ static char *print_number(char *buf,
 
     c = (type & ZEROPAD) ? '0' : ' ';
 
-    /* get sign */
+    /* 按长度修饰符选择有符号解释宽度，并把负数转换为绝对值及 '-' 前缀。 */
     sign = 0;
     if (type & SIGN)
     {
@@ -228,7 +268,7 @@ static char *print_number(char *buf,
         }
     }
 
-    /* no align to the left */
+    /* 非左对齐时，在数字前补齐剩余字段宽度；ZEROPAD 决定补零还是空格。 */
     if (!(type & LEFT))
     {
         while (size-- > 0)
@@ -252,7 +292,7 @@ static char *print_number(char *buf,
         ++ buf;
     }
 
-    /* put number in the temporary buffer */
+    /* 临时数组中的数字顺序相反，因此从末尾向前写入最终缓冲区。 */
     while (i-- > 0 && (precision_bak != 0))
     {
         if (buf < end)
@@ -277,23 +317,32 @@ static char *print_number(char *buf,
 }
 
 #if (defined(__GNUC__) && !defined(__ARMCC_VERSION) /* GCC */) && (__GNUC__ >= 7)
-/* Disable "-Wimplicit-fallthrough" below GNUC V7 */
+/* GCC 7 及以上会诊断 switch 有意贯穿，局部关闭该诊断。 */
 #pragma GCC diagnostic push
-/* ignore warning: this statement may fall through */
+/* 下面若干 case 通过贯穿来叠加标志或共用处理路径。 */
 #pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
 #endif /* (defined(__GNUC__) && !defined(__ARMCC_VERSION)) && (__GNUC__ >= 7 */
 /**
- * @brief  This function will fill a formatted string to buffer.
+ * @brief 按格式串和 va_list 生成有长度上限的字符串。
  *
- * @param  buf is the buffer to save formatted string.
+ * @param buf 输出缓冲区。size 大于 0 时必须有效且至少可写 @p size 个字符。
  *
- * @param  size is the size of buffer.
+ * @param size 缓冲区总容量，包含结尾 '\0' 所占位置；为 0 时只计算长度，不写数据。
  *
- * @param  fmt is the format parameters.
+ * @param fmt 以 '\0' 结尾的格式串。
  *
- * @param  args is a list of variable parameters.
+ * @param args 与格式说明符类型、顺序严格匹配的可变参数列表。
  *
- * @return The number of characters actually written to buffer.
+ * @return 完整结果本应输出的字符数，不含结尾 '\0'。返回值可能大于或等于 size，
+ *         此时缓冲区内容已被截断；这不是“实际写入字符数”。
+ *
+ * @details 解析顺序是：普通字符 → `%` 后标志 → 字段宽度 → 精度 → 长度修饰符 →
+ *          转换字符。支持 `%c`、`%s`、`%p`、`%%`、`%b`、`%o`、`%x/%X`、
+ *          `%d/%i/%u`；long long 支持由配置开启。浮点参数会被取出以保持 va_list
+ *          游标同步，但只按未知格式原样输出 `%` 和转换字符，不进行浮点转换。
+ *
+ * @warning tiny 后端的字符串字段宽度会参与限制读取长度，精度为 0 时也不按标准
+ *          printf 的方式截断字符串；不要依赖这些边界行为实现协议格式。
  */
 int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
@@ -306,16 +355,16 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
     char *str = RT_NULL, *end = RT_NULL, c = 0;
     const char *s = RT_NULL;
 
-    rt_uint8_t base = 0;            /* the base of number */
-    rt_uint8_t flags = 0;           /* flags to print number */
-    rt_uint8_t qualifier = 0;       /* 'h', 'l', or 'L' for integer fields */
-    rt_int32_t field_width = 0;     /* width of output field */
-    int precision = 0;      /* min. # of digits for integers and max for a string */
+    rt_uint8_t base = 0;            /* 整数转换所用进制 */
+    rt_uint8_t flags = 0;           /* 当前转换项的格式标志位 */
+    rt_uint8_t qualifier = 0;       /* 整数长度修饰符 h、hh、l、ll 或 z */
+    rt_int32_t field_width = 0;     /* 最小输出字段宽度，-1 表示未指定 */
+    int precision = 0;              /* 整数最少位数或字符串最大长度的近似控制 */
 
     str = buf;
     end = buf + size;
 
-    /* Make sure end is always >= buf */
+    /* 若指针加法发生回绕，把 end 饱和到最大地址，避免后续边界比较方向颠倒。 */
     if (end < buf)
     {
         end  = ((char *) - 1);
@@ -335,12 +384,12 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             continue;
         }
 
-        /* process flags */
+        /* 读取可重复、顺序任意的 - + 空格 # 0 标志。 */
         flags = 0;
 
         while (1)
         {
-            /* skips the first '%' also */
+            /* 第一次递增跨过 '%'，后续递增跨过已识别的标志。 */
             ++fmt;
             if (*fmt == '-') flags |= LEFT;
             else if (*fmt == '+') flags |= PLUS;
@@ -350,7 +399,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             else break;
         }
 
-        /* get field width */
+        /* 字段宽度可直接写数字，也可由 '*' 从下一个 int 参数取得。 */
         field_width = -1;
         if (_ISDIGIT(*fmt))
         {
@@ -359,7 +408,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
         else if (*fmt == '*')
         {
             ++fmt;
-            /* it's the next argument */
+            /* 负宽度等价于正宽度加左对齐标志。 */
             field_width = va_arg(args, int);
             if (field_width < 0)
             {
@@ -368,7 +417,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             }
         }
 
-        /* get the precision */
+        /* '.' 后的精度同样支持常量数字或 '*' 参数。 */
         precision = -1;
         if (*fmt == '.')
         {
@@ -380,7 +429,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             else if (*fmt == '*')
             {
                 ++fmt;
-                /* it's the next argument */
+                /* 星号精度由下一个 int 参数提供。 */
                 precision = va_arg(args, int);
             }
             if (precision < 0)
@@ -389,7 +438,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             }
         }
 
-        qualifier = 0; /* get the conversion qualifier */
+        qualifier = 0; /* 解析整数长度修饰符。 */
 
         if (*fmt == 'h' || *fmt == 'l' ||
 #ifdef RT_KLIBC_USING_VSNPRINTF_LONGLONG
@@ -413,7 +462,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             }
         }
 
-        /* the default base */
+        /* 整数默认使用十进制，具体 case 可改成二、八或十六进制。 */
         base = 10;
 
         switch (*fmt)
@@ -428,7 +477,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
                 }
             }
 
-            /* get character */
+            /* 可变参数中的 char 会发生整数提升，因此按 int 取出再截成 8 位。 */
             c = (rt_uint8_t)va_arg(args, int);
             if (str < end)
             {
@@ -436,7 +485,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             }
             ++ str;
 
-            /* put width */
+            /* LEFT 置位时，字段剩余宽度在字符之后补空格。 */
             while (--field_width > 0)
             {
                 if (str < end) *str = ' ';
@@ -485,7 +534,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             if (field_width == -1)
             {
                 field_width = sizeof(void *) << 1;
-                field_width += 2; /* `0x` prefix */
+                field_width += 2; /* 默认指针宽度还要计入 `0x` 前缀。 */
                 flags |= SPECIAL;
                 flags |= ZEROPAD;
             }
@@ -501,7 +550,7 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
             ++ str;
             continue;
 
-        /* integer number formats - set up the flags and "break" */
+        /* 整数转换项只在这里设定进制和标志，随后统一读取参数并调用 print_number()。 */
         case 'b':
             base = 2;
             break;
@@ -601,11 +650,11 @@ int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
         }
     }
 
-    /* the trailing null byte doesn't count towards the total
+    /* 结尾 '\0' 不计入返回长度；str 始终表示完整结果的逻辑末尾。
     * ++str;
     */
     return str - buf;
 }
 #if (defined(__GNUC__) && !defined(__ARMCC_VERSION) /* GCC */) && (__GNUC__ >= 7)
-#pragma GCC diagnostic pop /* ignored "-Wimplicit-fallthrough" */
+#pragma GCC diagnostic pop /* 恢复贯穿诊断设置。 */
 #endif /* (defined(__GNUC__) && !defined(__ARMCC_VERSION)) && (__GNUC__ >= 7 */

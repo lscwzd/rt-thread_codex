@@ -3,128 +3,120 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2023-03-14     WangShun     first version
- * 2023-05-20     Bernard      add stdc atomic detection.
- * 2026-03-09     wdfk-prog    add 8/16-bit atomic operations support
+ * 变更记录：
+ * 日期           作者         说明
+ * 2023-03-14     WangShun     初始版本
+ * 2023-05-20     Bernard      增加 stdc 原子操作检测。
+ * 2026-03-09     wdfk-prog    增加 8/16 位原子操作支持
  */
 
 /**
  * @file rtatomic.h
- * @brief Backend-independent atomic operations and atomic-list helpers.
+ * @brief 与底层实现无关的原子操作及原子链表辅助接口。
  *
- * RT-Thread exposes one set of fetch-style atomic operations while allowing
- * a BSP/architecture to select one of three implementations:
+ * RT-Thread 向上层提供统一的 fetch 型原子操作接口，同时允许 BSP/体系结构从
+ * 以下三种实现中选择一种：
  *
- * 1. `RT_USING_STDC_ATOMIC`: C11 `<stdatomic.h>` primitives.  The unsuffixed
- *    standard functions used here have sequentially consistent ordering.
- * 2. `RT_USING_HW_ATOMIC`: CPU-port primitives, normally implemented with
- *    exclusive-load/store, compare-and-swap, or equivalent instructions.  This
- *    interface does not impose a uniform cross-port memory order: barriers and
- *    acquire/release strength are defined by each architecture implementation.
- * 3. Software fallback: a short critical section entered through
- *    rt_hw_interrupt_disable().
+ * 1. `RT_USING_STDC_ATOMIC`：C11 `<stdatomic.h>` 原语。这里使用的无后缀标准
+ *    函数采用顺序一致性内存序。
+ * 2. `RT_USING_HW_ATOMIC`：CPU 移植层提供的原语，通常由独占加载/存储、
+ *    比较并交换或等效指令实现。此接口不为所有移植层强制规定统一的内存序；
+ *    屏障以及获取/释放的强度由各体系结构实现自行定义。
+ * 3. 软件后备实现：通过 rt_hw_interrupt_disable() 进入一个很短的临界区。
  *
- * Fetch-add/subtract/bitwise operations and exchange return the value observed
- * *before* the modification.  Compare-and-exchange instead reports success as
- * a boolean: on failure it writes the actual value back through `expected`.
- * Flag test-and-set reports the prior clear/set state, but callers should not
- * assume that every backend normalizes its return to exactly zero or one.
+ * fetch 加/减、按位操作和 exchange 都返回修改*前*观察到的值。相反，
+ * compare-and-exchange 以布尔值报告是否成功：失败时会通过 `expected` 写回
+ * 实际读到的值。flag test-and-set 返回操作前的清除/置位状态，但调用者不应
+ * 假定每个后端都会把返回值规范化为恰好零或一。
  *
- * `volatile` in the API prevents inappropriate ordinary load/store elision;
- * it is not itself a synchronization mechanism.  Ordering for the hardware
- * backend is part of the CPU port's contract.  The software fallback uses the
- * generic RT-Thread exclusion primitive: it masks local interrupts on UP, while
- * an SMP build maps that primitive to rt_cpus_lock()/rt_cpus_unlock().  It is
- * therefore serialized but is not a lock-free implementation; CPU-port and
- * early-boot constraints of that generic lock still apply.
+ * API 中的 `volatile` 可防止普通的读/写操作被不恰当地省略，但它本身不是
+ * 同步机制。硬件后端的内存排序属于 CPU 移植层约定的一部分。软件后备实现
+ * 使用 RT-Thread 的通用排他原语：在 UP 上屏蔽本地中断，而在 SMP 构建中该
+ * 原语映射为 rt_cpus_lock()/rt_cpus_unlock()。因此它能使操作串行化，但不是
+ * 无锁实现；该通用锁对 CPU 移植和早期启动阶段的限制仍然适用。
  *
- * This interface is currently emitted only for C translation units.  The
- * atomic storage aliases remain available to C++, but this header does not
- * attempt to map C11 `<stdatomic.h>` semantics onto differing C++ toolchain
- * implementations.
+ * 当前仅为 C 编译单元提供此接口。原子存储类型别名仍可供 C++ 使用，但本
+ * 头文件不会尝试把 C11 `<stdatomic.h>` 的语义映射到行为可能不同的 C++
+ * 工具链实现。
  */
 #ifndef __RT_ATOMIC_H__
 #define __RT_ATOMIC_H__
 
-/* Supplies atomic storage types, inline attributes, and interrupt primitives. */
+/* 提供原子存储类型、内联属性和中断控制原语。 */
 #include <rthw.h>
 
 #if !defined(__cplusplus)
 
 /**
- * @name Architecture atomic primitive contract
+ * @name 体系结构原子原语约定
  *
- * A CPU port supplies these functions when `RT_USING_HW_ATOMIC` selects the
- * hardware backend.  Native-width operations use `rt_atomic_t`; optional
- * byte and halfword operations are selected separately by
- * `ARCH_USING_HW_ATOMIC_8` and `ARCH_USING_HW_ATOMIC_16`.
+ * 当 `RT_USING_HW_ATOMIC` 选择硬件后端时，CPU 移植层必须提供这些函数。
+ * 与本机字长相同宽度的操作使用 `rt_atomic_t`；可选的字节和半字操作分别由
+ * `ARCH_USING_HW_ATOMIC_8` 和 `ARCH_USING_HW_ATOMIC_16` 选择。
  * @{
  */
 
-/** Atomically read a native-width object and return its current value. */
+/** 以原子方式读取一个本机字宽对象，并返回其当前值。 */
 rt_atomic_t rt_hw_atomic_load(volatile rt_atomic_t *ptr);
 
-/** Atomically replace a native-width object with @p val. */
+/** 以原子方式用 @p val 替换一个本机字宽对象。 */
 void rt_hw_atomic_store(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Atomically read an 8-bit object and return its current value. */
+/** 以原子方式读取一个 8 位对象，并返回其当前值。 */
 rt_atomic8_t rt_hw_atomic_load8(volatile rt_atomic8_t *ptr);
 
-/** Atomically replace an 8-bit object with @p val. */
+/** 以原子方式用 @p val 替换一个 8 位对象。 */
 void rt_hw_atomic_store8(volatile rt_atomic8_t *ptr, rt_atomic8_t val);
 
-/** Atomically read a 16-bit object and return its current value. */
+/** 以原子方式读取一个 16 位对象，并返回其当前值。 */
 rt_atomic16_t rt_hw_atomic_load16(volatile rt_atomic16_t *ptr);
 
-/** Atomically replace a 16-bit object with @p val. */
+/** 以原子方式用 @p val 替换一个 16 位对象。 */
 void rt_hw_atomic_store16(volatile rt_atomic16_t *ptr, rt_atomic16_t val);
 
-/** Add @p val atomically and return the value that preceded the addition. */
+/** 以原子方式加上 @p val，并返回相加前的值。 */
 rt_atomic_t rt_hw_atomic_add(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Subtract @p val atomically and return the value that preceded the subtraction. */
+/** 以原子方式减去 @p val，并返回相减前的值。 */
 rt_atomic_t rt_hw_atomic_sub(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Apply 8-bit bitwise AND atomically and return the previous value. */
+/** 以原子方式对 8 位对象执行按位 AND，并返回操作前的值。 */
 rt_atomic8_t rt_hw_atomic_and8(volatile rt_atomic8_t *ptr, rt_atomic8_t val);
 
-/** Apply 8-bit bitwise OR atomically and return the previous value. */
+/** 以原子方式对 8 位对象执行按位 OR，并返回操作前的值。 */
 rt_atomic8_t rt_hw_atomic_or8(volatile rt_atomic8_t *ptr, rt_atomic8_t val);
 
-/** Apply 16-bit bitwise AND atomically and return the previous value. */
+/** 以原子方式对 16 位对象执行按位 AND，并返回操作前的值。 */
 rt_atomic16_t rt_hw_atomic_and16(volatile rt_atomic16_t *ptr, rt_atomic16_t val);
 
-/** Apply 16-bit bitwise OR atomically and return the previous value. */
+/** 以原子方式对 16 位对象执行按位 OR，并返回操作前的值。 */
 rt_atomic16_t rt_hw_atomic_or16(volatile rt_atomic16_t *ptr, rt_atomic16_t val);
 
-/** Apply native-width bitwise AND atomically and return the previous value. */
+/** 以原子方式对本机字宽对象执行按位 AND，并返回操作前的值。 */
 rt_atomic_t rt_hw_atomic_and(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Apply native-width bitwise OR atomically and return the previous value. */
+/** 以原子方式对本机字宽对象执行按位 OR，并返回操作前的值。 */
 rt_atomic_t rt_hw_atomic_or(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Apply native-width bitwise XOR atomically and return the previous value. */
+/** 以原子方式对本机字宽对象执行按位 XOR，并返回操作前的值。 */
 rt_atomic_t rt_hw_atomic_xor(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Replace a native-width object atomically and return its previous value. */
+/** 以原子方式替换一个本机字宽对象，并返回其操作前的值。 */
 rt_atomic_t rt_hw_atomic_exchange(volatile rt_atomic_t *ptr, rt_atomic_t val);
 
-/** Clear a flag object to zero atomically. */
+/** 以原子方式将标志对象清零。 */
 void rt_hw_atomic_flag_clear(volatile rt_atomic_t *ptr);
 
-/** Set a flag object to one atomically and return its previous zero/nonzero state. */
+/** 以原子方式将标志对象置为一，并返回其此前为零还是非零的状态。 */
 rt_atomic_t rt_hw_atomic_flag_test_and_set(volatile rt_atomic_t *ptr);
 
 /**
- * Compare @p ptr with `*expected` and conditionally store @p desired.
+ * 将 @p ptr 的值与 `*expected` 比较，只有相等时才存入 @p desired。
  *
- * @param ptr Object to test and possibly update.
- * @param expected Expected input value; overwritten with the observed value
- *        if the comparison fails.
- * @param desired Value stored when the comparison succeeds.
- * @return Nonzero on successful replacement, zero on mismatch.
+ * @param ptr 要测试且可能更新的对象。
+ * @param expected 期望的输入值；若比较失败，会用实际观察到的值覆盖它。
+ * @param desired 比较成功时要存入的值。
+ * @return 替换成功时为非零，值不匹配时为零。
  */
 rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_atomic_t *expected, rt_atomic_t desired);
 
@@ -133,23 +125,18 @@ rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_a
 #if defined(RT_USING_STDC_ATOMIC)
 
 /*
- * The C standard permits an implementation to define __STDC_NO_ATOMICS__
- * even in C11 mode.  Reject that combination rather than silently degrading
- * code explicitly configured to use the standard atomic backend.
+ * 即使处于 C11 模式，C 标准也允许实现定义 __STDC_NO_ATOMICS__。对于明确
+ * 配置为使用标准原子后端的代码，本文件会拒绝该组合，而不会静默降级。
  *
- * Fetch arithmetic/bitwise operations and exchange below return the
- * pre-operation value.  The generic C11 macros infer 8-, 16-, or native-width
- * operation from the pointed-to
- * `_Atomic` type.  No explicit memory order is supplied, so the C11 default
- * is memory_order_seq_cst.
+ * 下面的 fetch 算术/按位操作和 exchange 返回操作前的值。通用 C11 宏会根据
+ * 指针所指向的 `_Atomic` 类型推断 8 位、16 位或本机字宽操作。这里没有显式
+ * 指定内存序，因此使用 C11 默认的 memory_order_seq_cst。
  *
- * There is a compatibility caveat in the unchanged flag macros below:
- * rt_atomic_t is an atomic integer, not C11 `atomic_flag`, yet it is passed to
- * atomic_flag_clear/test_and_set.  That type mismatch is outside the C11 API
- * contract and some implementations operate on only flag-sized storage.  Do
- * not infer native-word flag semantics from this branch; configurations using
- * these macros must validate the toolchain behavior or prefer a corrected
- * port/backend implementation.
+ * 下面保持不变的 flag 宏存在兼容性注意事项：rt_atomic_t 是原子整数，而不是
+ * C11 `atomic_flag`，但它被传给 atomic_flag_clear/test_and_set。该类型不匹配
+ * 不属于 C11 API 合约，某些实现只会操作 flag 大小的存储空间。不要从这个
+ * 分支推断本机字宽 flag 语义；使用这些宏的配置必须验证工具链行为，或选择
+ * 已修正的移植层/后端实现。
  */
 #ifndef __STDC_NO_ATOMICS__
 #define rt_atomic_load(ptr) atomic_load(ptr)
@@ -177,26 +164,23 @@ rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_a
 
 #elif defined(RT_USING_HW_ATOMIC)
 /*
- * Native-width operations are always routed to the CPU port.  Byte and
- * halfword support is advertised independently: a CPU may have an atomic
- * word instruction but lack atomic sub-word read/modify/write instructions.
+ * 本机字宽操作始终转交给 CPU 移植层。字节和半字支持会独立声明：CPU 可能有
+ * 原子字操作指令，却没有原子的子字读/改/写指令。
  */
 #define rt_atomic_load(ptr) rt_hw_atomic_load(ptr)
 #define rt_atomic_store(ptr, v) rt_hw_atomic_store(ptr, v)
 #if defined(ARCH_USING_HW_ATOMIC_8)
-/* The architecture guarantees hardware-safe 8-bit atomic primitives. */
+/* 该体系结构保证 8 位原子原语可由硬件安全执行。 */
 #define rt_atomic_load8(ptr) rt_hw_atomic_load8(ptr)
 #define rt_atomic_store8(ptr, v) rt_hw_atomic_store8(ptr, v)
 #define rt_atomic_and8(ptr, v) rt_hw_atomic_and8(ptr, v)
 #define rt_atomic_or8(ptr, v)  rt_hw_atomic_or8(ptr, v)
 #else
 /*
- * Route to the software-helper names when 8-bit hardware support is absent.
- * In this header's present conditional layout those inline helpers are emitted
- * only by the full software-backend branch below, so a HW-atomic configuration
- * lacking ARCH_USING_HW_ATOMIC_8 has an unresolved interface unless its port
- * supplies compatible helpers.  This is a configuration gap, not a guaranteed
- * generic fallback.
+ * 缺少 8 位硬件支持时，映射到软件辅助函数名。按本头文件当前的条件编译
+ * 布局，这些内联辅助函数只会在下面完整的软件后端分支中生成。因此，缺少
+ * ARCH_USING_HW_ATOMIC_8 的 HW-atomic 配置若其移植层未提供兼容辅助函数，
+ * 接口就无法解析。这是配置缺口，并非一定可用的通用后备实现。
  */
 #define rt_atomic_load8(ptr) rt_soft_atomic_load8(ptr)
 #define rt_atomic_store8(ptr, v) rt_soft_atomic_store8(ptr, v)
@@ -204,17 +188,16 @@ rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_a
 #define rt_atomic_or8(ptr, v)  rt_soft_atomic_or8(ptr, v)
 #endif
 #if defined(ARCH_USING_HW_ATOMIC_16)
-/* The architecture guarantees hardware-safe 16-bit atomic primitives. */
+/* 该体系结构保证 16 位原子原语可由硬件安全执行。 */
 #define rt_atomic_load16(ptr) rt_hw_atomic_load16(ptr)
 #define rt_atomic_store16(ptr, v) rt_hw_atomic_store16(ptr, v)
 #define rt_atomic_and16(ptr, v) rt_hw_atomic_and16(ptr, v)
 #define rt_atomic_or16(ptr, v)  rt_hw_atomic_or16(ptr, v)
 #else
 /*
- * Route to the software-helper names when 16-bit hardware support is absent.
- * As with the 8-bit case, the inline definitions below are excluded in this
- * HW branch; a port/configuration must supply them or enable 16-bit hardware
- * support.  The macro mapping alone does not make the API linkable.
+ * 缺少 16 位硬件支持时，映射到软件辅助函数名。与 8 位情形相同，下面的内联
+ * 定义在该 HW 分支中会被排除；移植层/配置必须提供这些函数，或启用 16 位
+ * 硬件支持。仅有宏映射并不能使 API 可以链接。
  */
 #define rt_atomic_load16(ptr) rt_soft_atomic_load16(ptr)
 #define rt_atomic_store16(ptr, v) rt_soft_atomic_store16(ptr, v)
@@ -233,11 +216,10 @@ rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_a
 
 #else
 /*
- * No standard or CPU atomic backend was selected.  Map every public operation
- * to an inline critical section below.  rt_hw_interrupt_disable() returns the
- * prior interrupt state, which is restored verbatim by
- * rt_hw_interrupt_enable(level); this makes the helpers safe to call from an
- * already-excluded/nested context according to the UP or SMP CPU-port contract.
+ * 未选择标准或 CPU 原子后端。把每个公开操作映射到下面的内联临界区实现。
+ * rt_hw_interrupt_disable() 返回调用前的中断状态，随后
+ * rt_hw_interrupt_enable(level) 会原样恢复它；因此，按照 UP 或 SMP CPU
+ * 移植层的约定，这些辅助函数可在已进入排他区或嵌套的上下文中安全调用。
  */
 #include <rthw.h>
 #define rt_atomic_load(ptr) rt_soft_atomic_load(ptr)
@@ -261,11 +243,10 @@ rt_atomic_t rt_hw_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr, rt_a
 #define rt_atomic_compare_exchange_strong(ptr, v,des) rt_soft_atomic_compare_exchange_strong(ptr, v ,des)
 
 /**
- * @brief Atomically load an 8-bit value using generic kernel exclusion.
+ * @brief 使用通用内核互斥机制以原子方式读取一个 8 位值。
  *
- * @param ptr Address of the value to read.  It must remain valid throughout
- *        the operation.
- * @return The value observed while the generic exclusion token was held.
+ * @param ptr 要读取的值的地址；在整个操作期间必须保持有效。
+ * @return 持有通用互斥令牌期间观察到的值。
  */
 rt_inline rt_atomic8_t rt_soft_atomic_load8(volatile rt_atomic8_t *ptr)
 {
@@ -280,10 +261,10 @@ rt_inline rt_atomic8_t rt_soft_atomic_load8(volatile rt_atomic8_t *ptr)
 }
 
 /**
- * @brief Atomically store an 8-bit value using generic kernel exclusion.
+ * @brief 使用通用内核互斥机制以原子方式存储一个 8 位值。
  *
- * @param ptr Address of the destination object.
- * @param val New value to publish before the previous interrupt state is restored.
+ * @param ptr 目标对象的地址。
+ * @param val 在恢复先前中断状态前写入的新值。
  */
 rt_inline void rt_soft_atomic_store8(volatile rt_atomic8_t *ptr, rt_atomic8_t val)
 {
@@ -295,13 +276,12 @@ rt_inline void rt_soft_atomic_store8(volatile rt_atomic8_t *ptr, rt_atomic8_t va
 }
 
 /**
- * @brief Atomically load a 16-bit value using generic kernel exclusion.
+ * @brief 使用通用内核互斥机制以原子方式读取一个 16 位值。
  *
- * This protects targets on which an aligned halfword access might otherwise
- * be interrupted by code that modifies the same logical object.
+ * 这会保护目标平台上的访问：否则，对齐的半字访问可能被修改同一逻辑对象的代码中断。
  *
- * @param ptr Address of the value to read.
- * @return The protected value observed by this operation.
+ * @param ptr 要读取的值的地址。
+ * @return 本次操作在保护范围内观察到的值。
  */
 rt_inline rt_atomic16_t rt_soft_atomic_load16(volatile rt_atomic16_t *ptr)
 {
@@ -316,10 +296,10 @@ rt_inline rt_atomic16_t rt_soft_atomic_load16(volatile rt_atomic16_t *ptr)
 }
 
 /**
- * @brief Atomically store a 16-bit value using generic kernel exclusion.
+ * @brief 使用通用内核互斥机制以原子方式存储一个 16 位值。
  *
- * @param ptr Address of the destination object.
- * @param val New value to store.
+ * @param ptr 目标对象的地址。
+ * @param val 要存储的新值。
  */
 rt_inline void rt_soft_atomic_store16(volatile rt_atomic16_t *ptr, rt_atomic16_t val)
 {
@@ -331,14 +311,14 @@ rt_inline void rt_soft_atomic_store16(volatile rt_atomic16_t *ptr, rt_atomic16_t
 }
 
 /**
- * @brief Atomically apply an 8-bit AND and return the previous value.
+ * @brief 以原子方式对 8 位值执行 AND，并返回操作前的值。
  *
- * The new value is `old & val`.  Returning `old` gives fetch-and semantics,
- * which lets callers determine exactly which bits they cleared.
+ * 新值为 `old & val`。返回 `old` 符合 fetch-and 语义，调用方可据此准确判断清除了
+ * 哪些位。
  *
- * @param ptr Object to update.
- * @param val Bit mask ANDed with the object.
- * @return Value of the object before the AND.
+ * @param ptr 要更新的对象。
+ * @param val 要与对象执行 AND 的位掩码。
+ * @return 执行 AND 前的对象值。
  */
 rt_inline rt_atomic8_t rt_soft_atomic_and8(volatile rt_atomic8_t *ptr, rt_atomic8_t val)
 {
@@ -354,11 +334,11 @@ rt_inline rt_atomic8_t rt_soft_atomic_and8(volatile rt_atomic8_t *ptr, rt_atomic
 }
 
 /**
- * @brief Atomically apply an 8-bit OR and return the previous value.
+ * @brief 以原子方式对 8 位值执行 OR，并返回操作前的值。
  *
- * @param ptr Object to update.
- * @param val Bit mask to set in the object.
- * @return Value of the object before the OR.
+ * @param ptr 要更新的对象。
+ * @param val 要在对象中置位的位掩码。
+ * @return 执行 OR 前的对象值。
  */
 rt_inline rt_atomic8_t rt_soft_atomic_or8(volatile rt_atomic8_t *ptr, rt_atomic8_t val)
 {
@@ -374,11 +354,11 @@ rt_inline rt_atomic8_t rt_soft_atomic_or8(volatile rt_atomic8_t *ptr, rt_atomic8
 }
 
 /**
- * @brief Atomically apply a 16-bit AND and return the previous value.
+ * @brief 以原子方式对 16 位值执行 AND，并返回操作前的值。
  *
- * @param ptr Object to update.
- * @param val Bit mask ANDed with the object.
- * @return Value of the object before the AND.
+ * @param ptr 要更新的对象。
+ * @param val 要与对象执行 AND 的位掩码。
+ * @return 执行 AND 前的对象值。
  */
 rt_inline rt_atomic16_t rt_soft_atomic_and16(volatile rt_atomic16_t *ptr, rt_atomic16_t val)
 {
@@ -394,11 +374,11 @@ rt_inline rt_atomic16_t rt_soft_atomic_and16(volatile rt_atomic16_t *ptr, rt_ato
 }
 
 /**
- * @brief Atomically apply a 16-bit OR and return the previous value.
+ * @brief 以原子方式对 16 位值执行 OR，并返回操作前的值。
  *
- * @param ptr Object to update.
- * @param val Bit mask to set in the object.
- * @return Value of the object before the OR.
+ * @param ptr 要更新的对象。
+ * @param val 要在对象中置位的位掩码。
+ * @return 执行 OR 前的对象值。
  */
 rt_inline rt_atomic16_t rt_soft_atomic_or16(volatile rt_atomic16_t *ptr, rt_atomic16_t val)
 {
@@ -414,11 +394,11 @@ rt_inline rt_atomic16_t rt_soft_atomic_or16(volatile rt_atomic16_t *ptr, rt_atom
 }
 
 /**
- * @brief Atomically replace a native-width object and return its old value.
+ * @brief 以原子方式替换本机字宽对象，并返回其旧值。
  *
- * @param ptr Object to replace.
- * @param val New value.
- * @return Value held by @p ptr before the replacement.
+ * @param ptr 要替换的对象。
+ * @param val 新值。
+ * @return 替换前 @p ptr 保存的值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_exchange(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -432,17 +412,15 @@ rt_inline rt_atomic_t rt_soft_atomic_exchange(volatile rt_atomic_t *ptr, rt_atom
 }
 
 /**
- * @brief Atomically add to a native-width object and return its old value.
+ * @brief 以原子方式为本机字宽对象相加，并返回其旧值。
  *
- * The routine performs the selected backend's ordinary atomic addition; it
- * does not saturate or check overflow.  Because rt_atomic_t is signed, portable
- * callers must avoid values whose mathematical sum is outside its range; do
- * not rely on wraparound being identical across the C11, hardware, and
- * software backends.
+ * 此函数执行所选后端的普通原子加法，不会饱和处理或检查溢出。由于 rt_atomic_t
+ * 为有符号类型，为保证可移植性，调用方必须避免使数学和超出其取值范围；不要依赖
+ * C11、硬件和软件后端具有相同的回绕行为。
  *
- * @param ptr Counter to update.
- * @param val Increment, which may be negative for the signed base type.
- * @return Counter value before the addition.
+ * @param ptr 要更新的计数器。
+ * @param val 增量；对于有符号基础类型，它可以为负。
+ * @return 相加前的计数器值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_add(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -456,14 +434,14 @@ rt_inline rt_atomic_t rt_soft_atomic_add(volatile rt_atomic_t *ptr, rt_atomic_t 
 }
 
 /**
- * @brief Atomically subtract from a native-width object and return its old value.
+ * @brief 以原子方式从本机字宽对象相减，并返回其旧值。
  *
- * As with rt_soft_atomic_add(), callers must keep the mathematical result in
- * the signed rt_atomic_t range rather than relying on overflow behavior.
+ * 与 rt_soft_atomic_add() 相同，调用方必须让数学结果保持在有符号 rt_atomic_t
+ * 的取值范围内，而不能依赖溢出行为。
  *
- * @param ptr Counter to update.
- * @param val Amount to subtract.
- * @return Counter value before the subtraction.
+ * @param ptr 要更新的计数器。
+ * @param val 要减去的数值。
+ * @return 相减前的计数器值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_sub(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -477,11 +455,11 @@ rt_inline rt_atomic_t rt_soft_atomic_sub(volatile rt_atomic_t *ptr, rt_atomic_t 
 }
 
 /**
- * @brief Atomically apply native-width XOR and return the previous value.
+ * @brief 以原子方式对本机字宽值执行 XOR，并返回操作前的值。
  *
- * @param ptr Bit field to update.
- * @param val Mask of bits to toggle.
- * @return Bit field value before the XOR.
+ * @param ptr 要更新的位字段。
+ * @param val 要翻转的位掩码。
+ * @return 执行 XOR 前的位字段值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_xor(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -495,11 +473,11 @@ rt_inline rt_atomic_t rt_soft_atomic_xor(volatile rt_atomic_t *ptr, rt_atomic_t 
 }
 
 /**
- * @brief Atomically apply native-width AND and return the previous value.
+ * @brief 以原子方式对本机字宽值执行 AND，并返回操作前的值。
  *
- * @param ptr Bit field to update.
- * @param val Mask retained by the AND operation.
- * @return Bit field value before the AND.
+ * @param ptr 要更新的位字段。
+ * @param val 执行 AND 后要保留的位掩码。
+ * @return 执行 AND 前的位字段值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_and(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -513,11 +491,11 @@ rt_inline rt_atomic_t rt_soft_atomic_and(volatile rt_atomic_t *ptr, rt_atomic_t 
 }
 
 /**
- * @brief Atomically apply native-width OR and return the previous value.
+ * @brief 以原子方式对本机字宽值执行 OR，并返回操作前的值。
  *
- * @param ptr Bit field to update.
- * @param val Mask of bits to set.
- * @return Bit field value before the OR.
+ * @param ptr 要更新的位字段。
+ * @param val 要置位的位掩码。
+ * @return 执行 OR 前的位字段值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_or(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -531,10 +509,10 @@ rt_inline rt_atomic_t rt_soft_atomic_or(volatile rt_atomic_t *ptr, rt_atomic_t v
 }
 
 /**
- * @brief Atomically load a native-width value under generic kernel exclusion.
+ * @brief 在通用内核互斥保护下以原子方式读取本机字宽值。
  *
- * @param ptr Address of the object to read.
- * @return Value observed inside the critical section.
+ * @param ptr 要读取的对象地址。
+ * @return 在临界区内观察到的值。
  */
 rt_inline rt_atomic_t rt_soft_atomic_load(volatile rt_atomic_t *ptr)
 {
@@ -547,10 +525,10 @@ rt_inline rt_atomic_t rt_soft_atomic_load(volatile rt_atomic_t *ptr)
 }
 
 /**
- * @brief Atomically store a native-width value under generic kernel exclusion.
+ * @brief 在通用内核互斥保护下以原子方式存储本机字宽值。
  *
- * @param ptr Address of the destination object.
- * @param val New value.
+ * @param ptr 目标对象的地址。
+ * @param val 新值。
  */
 rt_inline void rt_soft_atomic_store(volatile rt_atomic_t *ptr, rt_atomic_t val)
 {
@@ -561,15 +539,13 @@ rt_inline void rt_soft_atomic_store(volatile rt_atomic_t *ptr, rt_atomic_t val)
 }
 
 /**
- * @brief Set an atomic flag and report whether it was already set.
+ * @brief 设置原子标志，并报告它此前是否已置位。
  *
- * The object is changed to one.  A zero return means this call acquired a
- * previously clear flag; a one return means the observed value was nonzero.
- * The return is normalized to zero/one rather than returning an arbitrary
- * previous nonzero value.
+ * 对象会被改为一。返回零表示本次调用取得了此前清除的标志；返回一表示观察到的值
+ * 非零。返回值会被规范化为零或一，而不会返回任意的先前非零值。
  *
- * @param ptr Native-width flag object, conventionally initialized to zero.
- * @return Zero if clear before the call, otherwise one.
+ * @param ptr 本机字宽标志对象，通常初始化为零。
+ * @return 调用前为清除状态时返回零，否则返回一。
  */
 rt_inline rt_atomic_t rt_soft_atomic_flag_test_and_set(volatile rt_atomic_t *ptr)
 {
@@ -588,9 +564,9 @@ rt_inline rt_atomic_t rt_soft_atomic_flag_test_and_set(volatile rt_atomic_t *ptr
 }
 
 /**
- * @brief Clear an atomic flag.
+ * @brief 清除原子标志。
  *
- * @param ptr Native-width flag object to reset to zero.
+ * @param ptr 要重置为零的本机字宽标志对象。
  */
 rt_inline void rt_soft_atomic_flag_clear(volatile rt_atomic_t *ptr)
 {
@@ -601,18 +577,16 @@ rt_inline void rt_soft_atomic_flag_clear(volatile rt_atomic_t *ptr)
 }
 
 /**
- * @brief Strong compare-and-exchange implemented under generic kernel exclusion.
+ * @brief 在通用内核互斥保护下实现的强比较并交换操作。
  *
- * There is no spurious-failure path: equality always replaces `*ptr1` with
- * @p desired.  On mismatch, the observed value is copied to `*ptr2`; this
- * allows a caller's retry loop to compare against the newest observation.
- * `ptr1` and `ptr2` are expected to identify valid objects for the full
- * critical section and normally should not alias one another.
+ * 不存在伪失败路径：只要相等，就一定会用 @p desired 替换 `*ptr1`。不相等时，
+ * 会将观察到的值复制到 `*ptr2`，从而让调用方的重试循环能与最新观察值比较。
+ * `ptr1` 和 `ptr2` 在整个临界区内都应指向有效对象，通常不应彼此别名。
  *
- * @param ptr1 Atomic object to test and conditionally modify.
- * @param ptr2 In/out expected value.
- * @param desired Replacement used when `*ptr1 == *ptr2`.
- * @return One on replacement, zero on mismatch.
+ * @param ptr1 要测试并在满足条件时修改的原子对象。
+ * @param ptr2 输入和输出的期望值。
+ * @param desired 当 `*ptr1 == *ptr2` 时使用的替换值。
+ * @return 发生替换时返回一，不匹配时返回零。
  */
 rt_inline rt_atomic_t rt_soft_atomic_compare_exchange_strong(volatile rt_atomic_t *ptr1, rt_atomic_t *ptr2,
         rt_atomic_t desired)
@@ -636,13 +610,12 @@ rt_inline rt_atomic_t rt_soft_atomic_compare_exchange_strong(volatile rt_atomic_
 #endif /* RT_USING_STDC_ATOMIC */
 
 /**
- * @brief Decrement an atomic counter and test whether it reached zero.
+ * @brief 将原子计数器减一，并测试其是否到达零。
  *
- * Because `rt_atomic_sub()` returns the value before subtraction, an old
- * value of one is exactly the transition to zero.
+ * `rt_atomic_sub()` 返回相减前的值，因此旧值为一恰好表示发生了到零的转换。
  *
- * @param ptr Counter to decrement.
- * @return RT_TRUE only for the one-to-zero transition; otherwise RT_FALSE.
+ * @param ptr 要减一的计数器。
+ * @return 仅在从一变为零时返回 RT_TRUE；否则返回 RT_FALSE。
  */
 rt_inline rt_bool_t rt_atomic_dec_and_test(volatile rt_atomic_t *ptr)
 {
@@ -650,22 +623,19 @@ rt_inline rt_bool_t rt_atomic_dec_and_test(volatile rt_atomic_t *ptr)
 }
 
 /**
- * @brief Add @p a unless the current value equals @p u.
+ * @brief 仅当当前值不等于 @p u 时加上 @p a。
  *
- * The loop begins with a snapshot.  A failed compare-and-exchange refreshes
- * `c` with the value that caused the failure, so the next iteration either
- * retries using the new value or stops if that value is @p u.  The strong
- * primitive makes every loop failure correspond to real interference rather
- * than a permitted spurious failure.
+ * 循环从一个快照开始。比较并交换失败时，会用导致失败的值刷新 `c`，因此下一次
+ * 循环会使用新值重试；若该值为 @p u，则停止。强原语保证循环的每一次失败都对应
+ * 真实的并发干扰，而非允许发生的伪失败。
  *
- * The expression `c + a` must remain representable by rt_atomic_t whenever it
- * is evaluated; signed overflow is not a portable atomic wraparound contract.
+ * 每次计算表达式 `c + a` 时，结果都必须可由 rt_atomic_t 表示；有符号溢出不是
+ * 可移植的原子回绕语义。
  *
- * @param ptr Counter to update.
- * @param a Amount to add.
- * @param u Sentinel value at which no addition is allowed.
- * @return Value observed immediately before a successful addition, or @p u
- *         when the addition was suppressed.
+ * @param ptr 要更新的计数器。
+ * @param a 要加上的数值。
+ * @param u 禁止相加时使用的哨兵值。
+ * @return 成功相加前立即观察到的值；若禁止相加，则返回 @p u。
  */
 rt_inline rt_atomic_t rt_atomic_fetch_add_unless(volatile rt_atomic_t *ptr, rt_atomic_t a, rt_atomic_t u)
 {
@@ -682,9 +652,9 @@ rt_inline rt_atomic_t rt_atomic_fetch_add_unless(volatile rt_atomic_t *ptr, rt_a
 }
 
 /**
- * @brief Add @p a unless the counter equals @p u and return success status.
+ * @brief 仅当计数器不等于 @p u 时加上 @p a，并返回成功状态。
  *
- * @return RT_TRUE when the value was changed, RT_FALSE when it equaled @p u.
+ * @return 值被修改时返回 RT_TRUE；值等于 @p u 时返回 RT_FALSE。
  */
 rt_inline rt_bool_t rt_atomic_add_unless(volatile rt_atomic_t *ptr, rt_atomic_t a, rt_atomic_t u)
 {
@@ -692,13 +662,12 @@ rt_inline rt_bool_t rt_atomic_add_unless(volatile rt_atomic_t *ptr, rt_atomic_t 
 }
 
 /**
- * @brief Increment a reference-style counter only when it is nonzero.
+ * @brief 仅在引用计数器非零时将其加一。
  *
- * This is useful when zero means that an object is already unavailable for
- * acquiring new references.  It does not by itself manage the object's
- * lifetime; reclamation must still be coordinated by the owner.
+ * 当零表示对象已不可再取得新引用时，此函数很有用。它本身并不管理对象生命周期；
+ * 对象回收仍须由所有者协调。
  *
- * @return RT_TRUE if incremented, RT_FALSE if zero was observed.
+ * @return 成功加一时返回 RT_TRUE；观察到零时返回 RT_FALSE。
  */
 rt_inline rt_bool_t rt_atomic_inc_not_zero(volatile rt_atomic_t *ptr)
 {
@@ -706,12 +675,12 @@ rt_inline rt_bool_t rt_atomic_inc_not_zero(volatile rt_atomic_t *ptr)
 }
 
 /**
- * @brief Initialize an empty atomic singly linked stack/list head.
+ * @brief 初始化一个空的原子单向链栈或链表头节点。
  *
- * This direct store is intended for initialization before the head becomes
- * concurrently visible.  Once published, update it through enqueue/dequeue.
+ * 此直接赋值仅用于头节点向并发上下文可见前的初始化。头节点发布后，应通过
+ * enqueue/dequeue 更新它。
  *
- * @param l Head to initialize; its atomic next field is set to zero.
+ * @param l 要初始化的头节点；其原子 next 字段会被设为零。
  */
 rt_inline void rt_ll_slist_init(rt_ll_slist_t *l)
 {
@@ -719,17 +688,15 @@ rt_inline void rt_ll_slist_init(rt_ll_slist_t *l)
 }
 
 /**
- * @brief Push a node onto an atomic singly linked list head.
+ * @brief 将一个节点压入原子单向链表的头部。
  *
- * The function repeatedly links @p n to the observed head and replaces the
- * head with @p n using compare-and-exchange.  If another producer wins first,
- * compare-and-exchange refreshes `exp`, `n->next` is rebuilt, and the push is
- * retried.  The operation therefore has LIFO behavior despite the historical
- * `enqueue` name.
+ * 此函数反复将 @p n 连接到观察到的头节点，并通过比较并交换将头节点替换为 @p n。
+ * 如果另一生产者先成功，比较并交换会刷新 `exp`，重新构建 `n->next` 后再次尝试
+ * 压入。因此，尽管历史名称为 `enqueue`，该操作实际具有后进先出行为。
  *
- * @param l Shared list head.
- * @param n Detached node to push.  It must not already be reachable from a
- *        list and must remain alive while concurrently observable.
+ * @param l 共享链表头节点。
+ * @param n 要压入的脱离节点。它不得已从任何链表可达，并且在并发上下文仍可能
+ *        观察到它时必须保持存活。
  */
 rt_inline void rt_ll_slist_enqueue(rt_ll_slist_t *l, rt_ll_slist_t *n)
 {
@@ -742,19 +709,17 @@ rt_inline void rt_ll_slist_enqueue(rt_ll_slist_t *l, rt_ll_slist_t *n)
 }
 
 /**
- * @brief Pop and return the current atomic-list head.
+ * @brief 弹出并返回当前原子链表的头节点。
  *
- * A nonempty iteration reads the candidate head's successor, then attempts
- * to publish that successor as the new list head.  Interference refreshes
- * `exp` and repeats.  RT_NULL is returned for an empty list.
+ * 非空循环会读取候选头节点的后继节点，然后尝试将该后继节点发布为新的链表头节点。
+ * 发生并发干扰时会刷新 `exp` 并重试。链表为空时返回 RT_NULL。
  *
- * This pointer-only algorithm does not tag the head with a generation count,
- * so it does not independently prevent the ABA problem.  A node must not be
- * freed and reused while another context may still hold it as an observed
- * candidate; users need an appropriate reclamation/lifetime discipline.
+ * 此仅使用指针的算法未给头节点附加代数计数，因此不能独立防止 ABA 问题。当其他
+ * 上下文仍可能将节点作为已观察到的候选节点持有时，不得释放或复用该节点；使用者
+ * 需要采用适当的回收和生命周期管理规则。
  *
- * @param l Shared list head.
- * @return Removed node, or RT_NULL when empty.
+ * @param l 共享链表头节点。
+ * @return 被移除的节点；链表为空时为 RT_NULL。
  */
 rt_inline rt_ll_slist_t *rt_ll_slist_dequeue(rt_ll_slist_t *l)
 {

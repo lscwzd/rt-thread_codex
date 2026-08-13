@@ -3,20 +3,35 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2025-09-02     Rbb666       utest case for rt_thread_suspend comprehensive tests
+ * 变更记录：
+ * 日期           作者         说明
+ * 2025-09-02     Rbb666       增加 rt_thread_suspend 综合测试
  */
 
 #include <rtthread.h>
 #include <rtdevice.h>
 #include "utest.h"
 
+/**
+ * @file thread_suspend_tc.c
+ * @brief 强制挂起/恢复线程的正常行为、边界状态及持锁死锁风险测试。
+ *
+ * 强制挂起与“线程主动等待 IPC”不同：控制线程可以在目标执行任意代码时停止它。
+ * 普通场景通过 `work_counter` 验证挂起期间计数不再变化、resume 后重新增长。
+ * API 边界场景检查重复挂起、未启动线程等状态返回。死锁风险场景故意让 owner
+ * 持有互斥量时被挂起，再启动 waiter，证明 waiter 无法推进；随后恢复 owner，
+ * 让其释放锁，验证系统可以解除风险并完成清理。
+ *
+ * 全局 volatile 标志只是测试观测点，不代替生产代码同步；线程间真正的完成通知
+ * 使用 `sync_sem`。每个测试都必须恢复/删除可能仍运行的线程，并删除信号量和
+ * 互斥量，避免把挂起线程留给后续 utest。
+ */
+
 #define THREAD_STACK_SIZE    1024
 #define THREAD_TIMESLICE     5
 #define TEST_THREAD_PRIORITY 25
 
-/* Global variables for normal usage test */
+/* 正常挂起/恢复场景的线程句柄、完成信号量和观测标志。 */
 static rt_thread_t          target_thread     = RT_NULL;
 static rt_thread_t          monitor_thread    = RT_NULL;
 static rt_sem_t             sync_sem          = RT_NULL;
@@ -25,7 +40,7 @@ static volatile rt_bool_t   suspend_test_done = RT_FALSE;
 static volatile rt_bool_t   suspend_success   = RT_FALSE;
 static volatile rt_bool_t   resume_success    = RT_FALSE;
 
-/* Global variables for deadlock test */
+/* “持锁 owner 被强制挂起”风险场景的对象和时序标志。 */
 static rt_mutex_t           test_mutex         = RT_NULL;
 static rt_thread_t          holder_thread      = RT_NULL;
 static rt_thread_t          waiter_thread      = RT_NULL;
@@ -36,7 +51,7 @@ static volatile rt_bool_t   test_completed     = RT_FALSE;
 static volatile rt_bool_t   thread_started     = RT_FALSE;
 static volatile rt_bool_t   thread_should_exit = RT_FALSE;
 
-/* Target work thread - the thread to be suspended */
+/** @brief 被控制的目标线程：每 10 ms 增加计数，供监控线程判断是否真正停住。 */
 static void target_work_thread(void *parameter)
 {
     while (1)
@@ -45,52 +60,52 @@ static void target_work_thread(void *parameter)
         {
             work_counter++;
         }
-        /* Yield CPU appropriately to simulate normal work */
+        /* 主动延时模拟正常工作，也让监控线程有稳定调度机会。 */
         rt_thread_mdelay(10);
     }
 }
 
-/* Monitor thread - responsible for suspending and resuming target thread */
+/** @brief 控制线程：采样计数、挂起目标、验证静止、恢复并通知主测试完成。 */
 static void monitor_control_thread(void *parameter)
 {
     rt_uint32_t counter_before, counter_after;
 
-    /* Wait for target thread to start working */
+    /* 先给目标线程足够时间进入稳定计数循环。 */
     rt_thread_mdelay(300);
 
-    /* Record counter value before suspend */
+    /* 记录挂起前基准值。 */
     counter_before = work_counter;
 
-    /* Use rt_thread_suspend to suspend target thread */
+    /* 强制把另一个线程从可运行状态转为挂起。 */
     if (rt_thread_suspend(target_thread) == RT_EOK)
     {
         suspend_success = RT_TRUE;
 
-        /* Trigger scheduling to ensure thread is suspended */
+        /* 主动调度，确保状态变化已经在执行顺序上生效。 */
         rt_schedule();
 
-        /* Wait for a while to verify thread is indeed suspended */
+        /* 观察窗口内目标不应再得到 CPU。 */
         rt_thread_mdelay(500);
 
         counter_after = work_counter;
 
-        /* Verify thread is indeed suspended (counter should stop changing) */
+        /* 计数完全不变才证明挂起成功。 */
         if (counter_after == counter_before)
         {
-            /* Resume target thread */
+            /* 恢复目标并检查 API 返回。 */
             if (rt_thread_resume(target_thread) == RT_EOK)
             {
                 resume_success = RT_TRUE;
-                /* Wait for a while to verify thread resumes work */
+                /* 留出恢复运行窗口。 */
                 rt_thread_mdelay(200);
             }
         }
     }
 
-    /* End test */
+    /* 阻止目标继续更新测试观测值。 */
     suspend_test_done = RT_TRUE;
 
-    /* Send semaphore to notify test completion */
+    /* 用真正 IPC 通知主测试控制线程已完成全部检查。 */
     rt_sem_release(sync_sem);
 
     /* Keep running until deleted */
@@ -475,4 +490,3 @@ static void testcase(void)
     UTEST_UNIT_RUN(test_suspend_force_deadlock_risk);
 }
 UTEST_TC_EXPORT(testcase, "core.thread_suspend", utest_tc_init, utest_tc_cleanup, 30);
-

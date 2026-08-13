@@ -10,39 +10,16 @@
  */
 
 /**
- * Test Case Name: Kernel Core MemPool Functional Test
+ * @file mempool_tc.c
+ * @brief 验证固定块内存池的静态/动态生命周期、容量边界和重复使用稳定性。
  *
- * Test Objectives:
- * - Validate static/dynamic memory pool functionality
- * - Verify critical APIs: rt_mp_init, rt_mp_detach, rt_mp_alloc, rt_mp_free, rt_mp_create, rt_mp_delete
- * - Test boundary conditions and stress scenarios
+ * 内存池把一段连续存储切成等长块，分配/释放时间可预测，适合实时系统。本测试用
+ * 80 字节有效载荷、32 个块建立静态池；MEMPOOL_SIZE 还为每块预留内核自由链指针
+ * 的开销。动态池由 rt_mp_create() 同样建立 32 个块。
  *
- * Test Scenarios:
- * - **Static Init**: Predefined block size/count; verify name/total/free counts
- * - **Dynamic Create**: rt_mp_create; verify pool metadata
- * - **Static Alloc/Free**: 3-block allocation; verify count changes
- * - **Dynamic Alloc/Free**: Identical to static pool operations
- * - **Exhaustion Test**: Full allocation → free=0 → next alloc=NULL
- * - **Invalid Free**: NULL pointer free; no crash, count unchanged
- * - **Stress Test**: 100x full alloc/free cycles; count restored each time
- *
- * Verification Metrics:
- * - API returns: RT_EOK (success) / NULL (failure)
- * - Block counts match expected values
- * - Exhaustion: Allocation fails correctly
- * - NULL free: Safe without crash
- * - Stress: 0 errors/memory leaks
- *
- * Dependencies:
- * - RT_USING_MEMPOOL must be enabled
- * - RT_USING_UTEST framework must be enabled
- *
- * Expected Results:
- * [  PASSED  ] [ result   ] testcase (core.mempool)
- * - All 7 scenarios pass
- * - 0 memory leaks
- * - Stress test <10ms
- * - Execute via: `utest_run core.mempool` in msh
+ * 七个子场景依次检查元数据、三块分配/归还、耗尽后的非阻塞失败、释放 RT_NULL
+ * 的幂等性，以及 100 轮“全部取出再全部归还”。block_free_count 的断言同时验证
+ * 自由链计数没有泄漏。测试项为 `core.mempool`；这里没有测等待者阻塞/唤醒时序。
  */
 
 #include <rtthread.h>
@@ -53,11 +30,14 @@
 #define MEMPOOL_BLOCK_COUNT 32
 #define MEMPOOL_SIZE        (MEMPOOL_BLOCK_SIZE + sizeof(rt_uint8_t *)) * MEMPOOL_BLOCK_COUNT
 
+/* 静态池的后备存储，生命周期覆盖整个测试套件。 */
 static rt_uint8_t        mempool_static[MEMPOOL_SIZE];
+/* 静态池控制块：detach 只注销对象，不释放上述数组。 */
 static struct rt_mempool mp_static;
+/* 动态池句柄：控制块和后备存储都由 create/delete 管理。 */
 static rt_mp_t           mp_dynamic;
 
-/* Static memory pool test */
+/** 初始化静态池，并核对名称、总块数和初始自由块数。 */
 static void test_mp_static_init(void)
 {
     rt_err_t err;
@@ -69,7 +49,7 @@ static void test_mp_static_init(void)
     uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Dynamic memory pool test */
+/** 创建动态池并验证 create 根据参数正确填写关键元数据。 */
 static void test_mp_dynamic_create(void)
 {
     mp_dynamic = rt_mp_create("mp_dynamic", MEMPOOL_BLOCK_COUNT, MEMPOOL_BLOCK_SIZE);
@@ -79,12 +59,17 @@ static void test_mp_dynamic_create(void)
     uassert_true(mp_dynamic->block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Allocation and free test for static */
+/**
+ * @brief 对静态池执行三次非阻塞分配和逆向资源恢复检查。
+ *
+ * timeout=0 表示池空时立即失败，本场景池未空，所以三个指针都必须非空。自由计数
+ * 应从 32 降到 29，再在逐块 free 后恢复 32，证明节点能重新接回自由链。
+ */
 static void test_mp_static_alloc_free(void)
 {
     void *block1, *block2, *block3;
 
-    /* Allocate blocks */
+    /* 连续取出三个互不重叠的固定块。 */
     block1 = rt_mp_alloc(&mp_static, 0);
     uassert_not_null(block1);
 
@@ -94,24 +79,24 @@ static void test_mp_static_alloc_free(void)
     block3 = rt_mp_alloc(&mp_static, 0);
     uassert_not_null(block3);
 
-    /* Check free count */
+    /* 每次成功分配恰好消耗一个自由节点。 */
     uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT - 3);
 
-    /* Free blocks */
+    /* 归还顺序不影响最终容量恢复。 */
     rt_mp_free(block1);
     rt_mp_free(block2);
     rt_mp_free(block3);
 
-    /* Check free count */
+    /* 所有块归还后不应出现计数泄漏。 */
     uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Allocation and free test for dynamic */
+/** 对动态池重复相同的三块分配/归还验证，区分对象所有权而不改变块算法。 */
 static void test_mp_dynamic_alloc_free(void)
 {
     void *block1, *block2, *block3;
 
-    /* Allocate blocks */
+    /* 动态控制块使用与静态池相同的非阻塞分配接口。 */
     block1 = rt_mp_alloc(mp_dynamic, 0);
     uassert_not_null(block1);
 
@@ -121,99 +106,110 @@ static void test_mp_dynamic_alloc_free(void)
     block3 = rt_mp_alloc(mp_dynamic, 0);
     uassert_not_null(block3);
 
-    /* Check free count */
+    /* 三次成功分配后剩余总数减三。 */
     uassert_true(mp_dynamic->block_free_count == MEMPOOL_BLOCK_COUNT - 3);
 
-    /* Free blocks */
+    /* rt_mp_free 从块头信息找到所属池，无需额外传池句柄。 */
     rt_mp_free(block1);
     rt_mp_free(block2);
     rt_mp_free(block3);
 
-    /* Check free count */
+    /* 动态池容量完全恢复。 */
     uassert_true(mp_dynamic->block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Boundary test: allocate all blocks and try to allocate more */
+/**
+ * @brief 验证静态池完全耗尽时第 33 次非阻塞分配返回 RT_NULL。
+ *
+ * blocks 数组保存每个成功指针用于清理；即使额外分配正确失败，也必须归还前 32 块，
+ * 避免影响后续压力测试。
+ */
 static void test_mp_boundary_alloc_exceed(void)
 {
     void *blocks[MEMPOOL_BLOCK_COUNT];
     void *extra_block;
     int   i;
 
-    /* Allocate all blocks */
+    /* 精确取出池声明的全部块。 */
     for (i = 0; i < MEMPOOL_BLOCK_COUNT; i++)
     {
         blocks[i] = rt_mp_alloc(&mp_static, 0);
         uassert_not_null(blocks[i]);
     }
 
-    /* Check free count */
+    /* 元数据应明确报告池空。 */
     uassert_true(mp_static.block_free_count == 0);
 
-    /* Try to allocate one more (should fail) */
+    /* timeout=0 禁止阻塞，没有自由块时必须立即返回空指针。 */
     extra_block = rt_mp_alloc(&mp_static, 0);
     uassert_null(extra_block);
 
-    /* Free all blocks */
+    /* 清理本场景持有的每一块。 */
     for (i = 0; i < MEMPOOL_BLOCK_COUNT; i++)
     {
         rt_mp_free(blocks[i]);
     }
 
-    /* Check free count */
+    /* 为下一子测试恢复干净夹具。 */
     uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Boundary test: free invalid block */
+/** 验证 rt_mp_free(RT_NULL) 是安全空操作，不改变池计数。 */
 static void test_mp_boundary_free_invalid(void)
 {
-    /* Test freeing NULL - should not crash and do nothing */
+    /* API 应允许通用清理代码无条件释放可空指针。 */
     rt_mp_free(RT_NULL);
 
-    /* Check free count remains the same */
+    /* 空操作不能凭空增加自由块。 */
     uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT);
 }
 
-/* Stress test: allocate and free repeatedly */
+/**
+ * @brief 连续 100 轮耗尽/恢复静态池，暴露自由链断链或重复计数问题。
+ *
+ * 每轮所有分配都必须成功、池空计数必须为 0，全部归还后必须恢复 32。该压力测试
+ * 检查确定性状态恢复，不把执行耗时作为断言指标。
+ */
 static void test_mp_stress_alloc_free(void)
 {
     void *blocks[MEMPOOL_BLOCK_COUNT];
     int   i, j;
 
-    for (j = 0; j < 100; j++) /* Repeat 100 times */
+    for (j = 0; j < 100; j++) /* 重复 100 轮相同生命周期。 */
     {
-        /* Allocate all blocks */
+        /* 本轮取空自由链。 */
         for (i = 0; i < MEMPOOL_BLOCK_COUNT; i++)
         {
             blocks[i] = rt_mp_alloc(&mp_static, 0);
             uassert_not_null(blocks[i]);
         }
 
-        /* Check free count */
+        /* 全部块均由 blocks 数组持有。 */
         uassert_true(mp_static.block_free_count == 0);
 
-        /* Free all blocks */
+        /* 逐一归还，下一轮会再次复用这些节点。 */
         for (i = 0; i < MEMPOOL_BLOCK_COUNT; i++)
         {
             rt_mp_free(blocks[i]);
         }
 
-        /* Check free count */
+        /* 每轮都必须恢复初始不变量。 */
         uassert_true(mp_static.block_free_count == MEMPOOL_BLOCK_COUNT);
     }
 }
 
 static rt_err_t utest_tc_init(void)
 {
+    /* 对象由前两个子测试建立，套件级初始化无需额外动作。 */
     return RT_EOK;
 }
 
 static rt_err_t utest_tc_cleanup(void)
 {
-    /* Detach static mempool */
+    /* 静态池只注销控制块，mempool_static 仍由本文件拥有。 */
     rt_mp_detach(&mp_static);
 
-    /* Delete dynamic mempool */
+    /* 动态池存在时释放其控制块和后备存储。 */
     if (mp_dynamic != RT_NULL)
     {
         rt_mp_delete(mp_dynamic);
@@ -224,6 +220,7 @@ static rt_err_t utest_tc_cleanup(void)
 
 static void testcase(void)
 {
+    /* 生命周期测试必须先创建对象，清理统一由 utest_tc_cleanup 完成。 */
     UTEST_UNIT_RUN(test_mp_static_init);
     UTEST_UNIT_RUN(test_mp_dynamic_create);
     UTEST_UNIT_RUN(test_mp_static_alloc_free);

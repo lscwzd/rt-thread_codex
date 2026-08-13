@@ -3,9 +3,9 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2024-01-19     Shell        Separate scheduling statements from rt_thread_t
+ * 变更记录：
+ * 日期           作者         说明
+ * 2024-01-19     Shell        与 rt_thread_t 分开的调度语句
  *                             to rt_sched_thread_ctx. Add definitions of scheduler.
  */
 #ifndef __RT_SCHED_H__
@@ -13,20 +13,17 @@
 
 /**
  * @file rtsched.h
- * @brief Scheduler-owned portion of a thread control block and internal APIs.
+ * @brief 线程控制块中由调度器拥有的部分及其内部 API。
  *
- * RT_SCHED_THREAD_CTX is embedded in `struct rt_thread`. Keeping scheduling
- * state in a dedicated subobject makes ownership and locking requirements
- * explicit while allowing the UP and SMP schedulers to share thread code.
+ * RT_SCHED_THREAD_CTX 嵌入在 `struct rt_thread` 中。将调度状态放入专用子对象，可明确
+ * 所有权和加锁要求，同时让 UP 与 SMP 调度器共用线程代码。
  *
- * Application code should use the public rt_thread_* and IPC APIs instead of
- * editing this state. Most fields participate in ready-queue membership,
- * priority bitmaps, timeout races, or cross-CPU decisions; observing or changing
- * them without the scheduler lock can corrupt a queue or produce a stale state.
+ * 应用代码应使用公开的 rt_thread_* 和 IPC API，而不应直接修改这些状态。多数成员参与就绪
+ * 队列归属、优先级位图、超时竞争或跨 CPU 决策；未持有调度器锁就读取或修改它们，可能破坏
+ * 队列或得到过期状态。
  *
- * Priority values follow RT-Thread convention: a numerically smaller value has
- * higher scheduling priority. Threads at the same priority are ordered by the
- * ready list and time-slice/yield policy.
+ * 优先级遵循 RT-Thread 约定：数值越小，调度优先级越高。同优先级线程由就绪链表及时间片/
+ * 主动让出策略排序。
  */
 
 #include "rttypes.h"
@@ -39,168 +36,153 @@ extern "C" {
 struct rt_thread;
 
 /**
- * Storage type for RT_THREAD_* state and auxiliary status flag bits.
- * The base lifecycle state is obtained with RT_THREAD_STAT_MASK; other bits may
- * record modifiers such as a pending yield.
+ * RT_THREAD_* 状态和辅助状态标志位的存储类型。使用 RT_THREAD_STAT_MASK 可取得基础
+ * 生命周期状态，其他位可记录待让出等修饰状态。
  */
 typedef rt_uint8_t rt_sched_thread_status_t;
 
 /**
- * @brief Scheduler-private priority and time-slice bookkeeping for one thread.
+ * @brief 一个线程的调度器私有优先级和时间片记录。
  *
- * Callers outside scheduler implementation code must never access these fields
- * directly. The derived masks have to stay consistent with current_priority
- * and with the ready queues. Updating only one field can make a runnable thread
- * invisible to the highest-priority lookup.
+ * 调度器实现代码以外的调用者绝不可直接访问这些成员。派生掩码必须与 current_priority 及
+ * 就绪队列保持一致；只更新一个成员会使可运行线程无法被最高优先级查找发现。
  */
 struct rt_sched_thread_priv
 {
-    /** Time slice reloaded when the thread yields or begins a new round. */
+    /** 线程让出或开始新一轮时重新装载的时间片。 */
     rt_tick_t                   init_tick;
-    /** Ticks left in the current time slice; decremented by scheduler ticks. */
+    /** 当前时间片剩余 tick；由调度 tick 递减。 */
     rt_tick_t                   remaining_tick;
 
-    /** Effective priority currently used for ready-queue selection. */
+    /** 当前用于选择就绪队列的有效优先级。 */
     rt_uint8_t                  current_priority;
-    /** Configured/base priority used when temporary inheritance is removed. */
+    /** 取消临时继承时使用的配置/基础优先级。 */
     rt_uint8_t                  init_priority;
 #if RT_THREAD_PRIORITY_MAX > 32
-    /** Group index (`current_priority >> 3`) in the two-level priority bitmap. */
+    /** 两级优先级位图中的组索引（`current_priority >> 3`）。 */
     rt_uint8_t                  number;
-    /** Bit selecting this priority inside its eight-priority group. */
+    /** 在八个优先级组成的组内选择此优先级的位。 */
     rt_uint8_t                  high_mask;
 #endif /* RT_THREAD_PRIORITY_MAX > 32 */
     /**
-     * Ready-group bit. For at most 32 priorities it directly selects the
-     * priority; for more priorities it selects the group named by number.
+     * 就绪组位。优先级不超过 32 时它直接选择优先级；更多时选择由 number 指定的组。
      */
     rt_uint32_t                 number_mask;
 
 };
 
 /**
- * @brief Scheduler-visible state embedded in every thread control block.
+ * @brief 嵌入每个线程控制块、对调度器可见的状态。
  *
- * Despite the historical word "public", members are public to cooperating
- * kernel subsystems, not to applications. A caller must hold the scheduler lock
- * before reading or writing mutable members unless an implementation explicitly
- * documents a lockless initialization phase.
+ * 虽然历史名称中含有“public”，成员仅对协作的内核子系统开放，并不对应用开放。除非实现
+ * 明确说明存在无锁初始化阶段，否则读取或写入可变成员前必须持有调度器锁。
  */
 struct rt_sched_thread_ctx
 {
-    /** Intrusive node used by exactly one scheduler-owned list at a time. */
+    /** 同一时刻仅供一个调度器拥有的侵入式链表使用的节点。 */
     rt_list_t                   thread_list_node;
 
-    /** Base RT_THREAD_* lifecycle state plus RT_THREAD_STAT_* modifier bits. */
+    /** 基础 RT_THREAD_* 生命周期状态加 RT_THREAD_STAT_* 修饰位。 */
     rt_uint8_t                  stat;
-    /** Per-thread marker reserved for scheduler-lock ownership bookkeeping. */
+    /** 预留给调度器锁所有权记录的每线程标记。 */
     rt_uint8_t                  sched_flag_locked:1;
-    /** Scheduler tracks the embedded timeout timer as active for current wait. */
+    /** 调度器以此标记嵌入的超时定时器是否在当前等待中生效。 */
     rt_uint8_t                  sched_flag_ttmr_set:1;
 
 #ifdef ARCH_USING_HW_THREAD_SELF
-    /** Reschedule request deferred while the thread is in a critical section. */
+    /** 线程处于临界区时延后的重新调度请求。 */
     rt_uint8_t                  critical_switch_flag:1;
 #endif /* ARCH_USING_HW_THREAD_SELF */
 
 #ifdef RT_USING_SMP
     /**
-     * Requested CPU affinity. RT_CPUS_NR is the sentinel for an unbound thread;
-     * otherwise the value is a logical CPU index.
+     * 请求的 CPU 亲和性。RT_CPUS_NR 是未绑定线程的哨兵值；否则该值为逻辑 CPU 索引。
      */
     rt_uint8_t                  bind_cpu;
     /**
-     * CPU currently executing this thread, or RT_CPU_DETACHED while it is not
-     * running. This prevents a thread from running simultaneously on two CPUs.
+     * 当前执行此线程的 CPU；未运行时为 RT_CPU_DETACHED。这可防止线程同时在两个 CPU 上运行。
      */
     rt_uint8_t                  oncpu;
 
-    /** Nested scheduler-critical-section depth owned by this thread. */
+    /** 此线程拥有的嵌套调度器临界区深度。 */
     rt_base_t                   critical_lock_nest;
 #endif
 
-    /** Private bitmap, priority, and time-slice data maintained by scheduler. */
+    /** 由调度器维护的私有位图、优先级和时间片数据。 */
     struct rt_sched_thread_priv sched_thread_priv;
 };
 
-/** Place the scheduler context member in `struct rt_thread` with its ABI name. */
+/** 以 ABI 规定的成员名将调度器上下文放入 `struct rt_thread`。 */
 #define RT_SCHED_THREAD_CTX struct rt_sched_thread_ctx sched_thread_ctx;
 
-/** Access the scheduler-private subobject of a thread pointer. */
+/** 访问线程指针所指对象的调度器私有子对象。 */
 #define RT_SCHED_PRIV(thread) ((thread)->sched_thread_ctx.sched_thread_priv)
-/** Access the scheduler-visible context of a thread pointer. */
+/** 访问线程指针所指对象的调度器可见上下文。 */
 #define RT_SCHED_CTX(thread) ((thread)->sched_thread_ctx)
 
 /**
- * @brief Convert a scheduler list node back to its containing thread.
+ * @brief 将调度器链表节点转换回其所属线程。
  *
- * The first rt_list_entry() recovers `struct rt_sched_thread_ctx` from the
- * embedded node. rt_container_of() then recovers `struct rt_thread` from its
- * embedded scheduling context. @p node must really be a thread_list_node;
- * passing an arbitrary list node gives undefined pointer arithmetic.
+ * 首先由 rt_list_entry() 从嵌入节点恢复 `struct rt_sched_thread_ctx`，再由
+ * rt_container_of() 从嵌入的调度上下文恢复 `struct rt_thread`。@p node 必须确为
+ * thread_list_node；传入任意链表节点会产生未定义的指针运算。
  */
 #define RT_THREAD_LIST_NODE_ENTRY(node)                                      \
     rt_container_of(                                                         \
         rt_list_entry((node), struct rt_sched_thread_ctx, thread_list_node), \
         struct rt_thread, sched_thread_ctx)
-/** Return a thread's scheduler list node as an lvalue. */
+/** 以左值形式返回线程的调度器链表节点。 */
 #define RT_THREAD_LIST_NODE(thread) (RT_SCHED_CTX(thread).thread_list_node)
 
 /**
- * @name System scheduler locking
+ * @name 系统调度器加锁
  *
- * A scheduler lock protects ready queues and state transitions against local
- * interrupt handlers and, on SMP, other CPUs. The saved level is an opaque
- * restore token, not a Boolean. Every successful lock must be paired with one
- * unlock using the exact returned value on every control-flow path.
+ * 调度器锁保护就绪队列和状态转换，防止本地中断处理函数以及 SMP 中其他 CPU 的并发访问。
+ * 保存的 level 是不透明的恢复令牌，不是布尔值。每次成功加锁都必须在每条控制流路径上使用
+ * 原样返回的值配对解锁一次。
  *
- * These short internal locks differ from the application-facing critical
- * section nesting API. Code holding one must not block or perform an operation
- * that expects the scheduler to make progress.
+ * 这些短时内部锁不同于面向应用的临界区嵌套 API。持锁代码不得阻塞，也不得执行需要调度器
+ * 推进的操作。
  * @{
  */
 
-/** Opaque interrupt/lock state saved by rt_sched_lock(). */
+/** 由 rt_sched_lock() 保存的不透明中断/锁状态。 */
 typedef rt_ubase_t rt_sched_lock_level_t;
 
 /**
- * @brief Lock scheduler state and save the previous level in @p plvl.
- * @return RT_EOK, or -RT_EINVAL when @p plvl is RT_NULL.
+ * @brief 锁定调度器状态，并把先前 level 保存到 @p plvl。
+ * @return 成功返回 RT_EOK；@p plvl 为 RT_NULL 时返回 -RT_EINVAL。
  */
 rt_err_t rt_sched_lock(rt_sched_lock_level_t *plvl);
 
 /**
- * @brief Unlock scheduler state without explicitly requesting rescheduling.
- * @param level Exact token returned through a successful rt_sched_lock().
- * @return RT_EOK after the saved scheduler/interrupt state is restored.
+ * @brief 解锁调度器状态，但不显式请求重新调度。
+ * @param level 成功调用 rt_sched_lock() 返回的原始令牌。
+ * @return 恢复保存的调度器/中断状态后返回 RT_EOK。
  */
 rt_err_t rt_sched_unlock(rt_sched_lock_level_t level);
 
 /**
- * @brief Unlock scheduler state and honor a pending scheduling decision.
+ * @brief 解锁调度器状态并处理待定的调度决定。
  *
- * Depending on UP/SMP and call context, a switch may occur immediately, be
- * deferred until interrupt exit, or return an error describing why scheduling
- * could not be performed at that point.
+ * 根据 UP/SMP 配置和调用上下文，切换可能立即发生、延后到中断退出，或返回说明此时不能调度的错误。
  *
- * @param level Exact token returned through a successful rt_sched_lock().
- * @return RT_EOK on completion. The SMP implementation can report a negative
- *         status when scheduling is unavailable, is requested from an ISR, or
- *         remains locked by an enclosing scheduler-critical region.
+ * @param level 成功调用 rt_sched_lock() 返回的原始令牌。
+ * @return 完成时返回 RT_EOK。SMP 实现在调度不可用、从 ISR 请求调度，或仍被外层调度器
+ *         临界区锁定时可报告负状态。
  */
 rt_err_t rt_sched_unlock_n_resched(rt_sched_lock_level_t level);
 
 /**
- * Return whether the calling CPU owns the scheduler-context lock.
+ * 返回调用 CPU 是否拥有调度器上下文锁。
  *
- * The common implementation is present only in scheduler_mp.c.  There is no UP
- * definition in this tree, and UP code must not call the declaration directly;
- * the public debug macros below expand away in that configuration.
+ * 公共实现在 scheduler_mp.c 中才存在。本代码树没有 UP 定义，UP 代码不得直接调用该声明；
+ * 在该配置下，下面公开的调试宏会展开为空。
  */
 rt_bool_t rt_sched_is_locked(void);
 
 #ifdef RT_USING_SMP
-/* Debug-only ownership assertions; do not acquire or release any lock. */
+/* 仅用于调试的所有权断言；不会获取或释放任何锁。 */
 #define RT_SCHED_DEBUG_IS_LOCKED do { RT_ASSERT(rt_sched_is_locked()); } while (0)
 #define RT_SCHED_DEBUG_IS_UNLOCKED do { RT_ASSERT(!rt_sched_is_locked()); } while (0)
 
@@ -212,178 +194,137 @@ rt_bool_t rt_sched_is_locked(void);
 /** @} */
 
 /**
- * @name Kernel-private thread scheduling operations
+ * @name 内核私有线程调度操作
  *
- * User code must never call these directly. Use rt_thread_* or an IPC API,
- * which validates lifecycle state and performs the complete lock/list/timer
- * protocol. The declarations are exposed only while compiling kernel or IPC
- * sources to discourage accidental use by components and applications.
+ * 用户代码绝不可直接调用这些接口。应使用 rt_thread_* 或 IPC API，它们会验证生命周期状态并
+ * 执行完整的锁/链表/定时器协议。这些声明只在编译内核或 IPC 源码时公开，以避免组件和应用误用。
  * @{
  */
 #if defined(__RT_KERNEL_SOURCE__) || defined(__RT_IPC_SOURCE__)
 
 /**
- * Initialize the complete scheduling context for a newly constructed thread.
- * Sets its lifecycle state and SMP detached/affinity sentinels, then initializes
- * private priority and time-slice data.  The enclosing object can already have
- * been linked into the object registry, so the creating path must prevent it
- * from becoming schedulable until this initialization is complete.
+ * 为新构造的线程初始化完整的调度上下文。设置其生命周期状态和 SMP 分离/亲和哨兵，然后初始化私有优先级和时间片数据。  封闭对象可能已经链接到对象注册表中，因此创建路径必须防止它变得可调度，直到初始化完成。
  *
- * @param thread Newly constructed thread control block.
- * @param tick Initial time-slice length in scheduler ticks.
- * @param priority Base priority in [0, RT_THREAD_PRIORITY_MAX).
+ * @param thread 新建线程控制块。
+ * @param tick 调度程序滴答数中的初始时间片长度。
+ * @param priority 基本优先级在 [0, RT_THREAD_PRIORITY_MAX) 中。
  */
 void rt_sched_thread_init_ctx(struct rt_thread *thread, rt_uint32_t tick, rt_uint8_t priority);
 
 /**
- * Initialize intrusive-list, priority bitmap, and time-slice fields. UP and SMP
- * provide separate implementations because their lock bookkeeping differs.
+ * 初始化侵入列表、优先级位图和时间片字段。 UP 和 SMP 提供单独的实现，因为它们的锁簿记不同。
  *
- * @param thread Thread whose private scheduling data is uninitialized.
- * @param tick Initial and remaining time slice.
- * @param priority Initial effective and base priority.
+ * @param thread 私有调度数据未初始化的线程。
+ * @param tick 初始和剩余时间片。
+ * @param priority 初始有效和基本优先级。
  */
 void rt_sched_thread_init_priv(struct rt_thread *thread, rt_uint32_t tick, rt_uint8_t priority);
 
 /**
- * Calculate ready-bitmap masks from current priority and put a new thread into
- * the suspended state from which the ordinary resume/start path can ready it.
- * @param thread Initialized thread not yet visible in a scheduling queue.
+ * 根据当前优先级计算就绪位图掩码，并将新线程置于挂起状态，普通恢复/启动路径可以从中准备好它。
+ * @param thread 已初始化的线程在调度队列中尚不可见。
  */
 void rt_sched_thread_startup(struct rt_thread *thread);
 
 /**
- * Complete SMP scheduler bookkeeping after the low-level context has changed.
- * Called with local interrupts disabled as part of the stack-pointer switch
- * transaction; not a general post-switch hook for applications.  The common
- * implementation exists only in the SMP scheduler, despite this unconditional
- * declaration; UP code must not call it unless its port supplies an override.
- * @param thread Incoming thread that now owns the processor context.
+ * 在低级上下文发生更改后完成 SMP 调度程序簿记。作为堆栈指针切换事务的一部分，在禁用本地中断的情况下调用；不是应用程序的通用后切换挂钩。  尽管有此无条件声明，但通用实现仅存在于 SMP 调度程序中； UP 代码不得调用它，除非其端口提供覆盖。
+ * @param thread 现在拥有处理器上下文的传入线程。
  */
 void rt_sched_post_ctx_switch(struct rt_thread *thread);
 
 /**
- * Charge @p tick ticks to the current thread's time slice. On exhaustion it
- * marks the thread as yielded and requests rescheduling. Typically called from
- * the system tick interrupt path.
- * @return RT_EOK after accounting and any scheduling request.
+ * 将@p tick记入当前线程的时间片。耗尽时，它将线程标记为已屈服并请求重新调度。通常从系统节拍中断路径调用。
+ * @return RT_EOK 在记帐和任何调度请求之后。
  */
 rt_err_t rt_sched_tick_increase(rt_tick_t tick);
 
 /**
- * Return the base RT_THREAD_* state of @p thread after masking modifier bits.
- * The scheduler lock must be held.
+ * 在屏蔽修饰符位后返回 @p thread 的基本 RT_THREAD_* 状态。必须持有调度程序锁。
  */
 rt_uint8_t rt_sched_thread_get_stat(struct rt_thread *thread);
 
-/** Return @p thread's effective/current priority; scheduler lock must be held. */
+/** 返回@p thread的有效/当前优先级；必须持有调度程序锁。 */
 rt_uint8_t rt_sched_thread_get_curr_prio(struct rt_thread *thread);
 
-/** Return @p thread's configured/base priority used as inheritance baseline. */
+/** 返回 @p thread 的配置/基本优先级用作继承基线。 */
 rt_uint8_t rt_sched_thread_get_init_prio(struct rt_thread *thread);
 
 /**
- * Reload @p thread's time slice and set its yield modifier under scheduler lock.
- * @return RT_EOK.
+ * 重新加载@p thread的时间片并在调度程序锁定下设置其产量修饰符。
+ * @return RT_EOK。
  */
 rt_err_t rt_sched_thread_yield(struct rt_thread *thread);
 
 /**
- * Mark @p thread closed after runnable/wait membership has been resolved.
- * @return RT_EOK; scheduler lock must be held.
+ * 解决可运行/等待成员资格后，将 @p thread 标记为关闭。
+ * @return RT_EOK;必须持有调度程序锁。
  */
 rt_err_t rt_sched_thread_close(struct rt_thread *thread);
 
 /**
- * Atomically transition a suspended thread to ready state. If a timeout timer
- * is active it is stopped first, allowing a timeout/producer race to be
- * detected without placing the thread in two queues.
- * @param thread Suspended thread to make runnable; scheduler lock must be held.
- * @return RT_EOK on success, or a negative status if the state/timer race
- *         prevents this caller from completing the transition.
+ * 以原子方式将挂起的线程转换为就绪状态。如果超时计时器处于活动状态，它将首先停止，从而允许检测超时/生产者竞争，而无需将线程放入两个队列中。
+ * @param thread 暂停线程以使其可运行；必须持有调度程序锁。
+ * @return RT_EOK 表示成功，或者如果状态/计时器竞争阻止此调用者完成转换，则为负状态。
  */
 rt_err_t rt_sched_thread_ready(struct rt_thread *thread);
 
 /**
- * Reserved scheduler/port suspend-transition declaration.
+ * 保留调度程序/端口暂停转换声明。
  *
- * The common UP and SMP scheduler sources in this tree do not provide a generic
- * definition or public calling contract for this symbol.  Kernel code uses
- * rt_thread_suspend_to_list() and the existing ready/list protocol instead.
- * A port that supplies this optional symbol must define the meaning of @p level
- * and its locking and return-value contract.
+ * 此树中常见的 UP 和 SMP 调度程序源不提供此符号的通用定义或公共调用协定。  内核代码使用 rt_thread_suspend_to_list() 和现有的就绪/列表协议。提供此可选符号的端口必须定义 @p level 及其锁定和返回值协定的含义。
  */
 rt_err_t rt_sched_thread_suspend(struct rt_thread *thread, rt_sched_lock_level_t level);
 
 /**
- * Change only @p thread's effective priority, for example during inheritance.
- * A ready thread is removed and reinserted so queue/bitmap state stays coherent.
- * The scheduler lock must be held and @p priority must be in the configured
- * priority range.
+ * 仅更改 @p thread 的有效优先级，例如在继承期间。就绪线程被删除并重新插入，因此队列/位图状态保持一致。必须保持调度程序锁，并且 @p priority 必须位于配置的优先级范围内。
  */
 rt_err_t rt_sched_thread_change_priority(struct rt_thread *thread, rt_uint8_t priority);
 
 /**
- * Change both effective and configured/base priority of @p thread to @p priority.
- * A ready thread is requeued under the new priority. The scheduler lock must be
- * held and @p priority must be in the configured priority range.
+ * 将 @p thread 的有效和配置/基本优先级更改为 @p priority。就绪线程将根据新的优先级重新排队。必须保持调度程序锁，并且 @p priority 必须位于配置的优先级范围内。
  */
 rt_err_t rt_sched_thread_reset_priority(struct rt_thread *thread, rt_uint8_t priority);
 
 /**
- * Bind a thread to logical CPU @p cpu in SMP. Valid bound IDs are
- * `0 .. RT_CPUS_NR - 1`; RT_CPUS_NR represents unbound, and larger values are
- * normalized to that sentinel by the SMP implementation. Negative IDs are not
- * valid input. The UP implementation rejects the operation with -RT_EINVAL.
- * @param thread Thread whose ready-queue placement/affinity may be updated.
- * @return RT_EOK in SMP after the update, or -RT_EINVAL in a UP build.
- * @note The SMP implementation acquires the scheduler lock itself and therefore
- *       expects to be called without that lock already held.
+ * 将线程绑定到SMP中的逻辑CPU @p cpu。有效绑定ID为`0 .. RT_CPUS_NR - 1`； RT_CPUS_NR 表示未绑定，较大的值由 SMP 实现标准化为该哨兵。负 ID 不是有效输入。 UP 实现拒绝带有 -RT_EINVAL 的操作。
+ * @param thread 线程的就绪队列放置/关联性可能会更新。
+ * 更新后 @return RT_EOK 位于 SMP 中，或 -RT_EINVAL 位于 UP 版本中。
+ * @note SMP 实现本身获取调度程序锁，因此预计在没有持有该锁的情况下调用。
  */
 rt_err_t rt_sched_thread_bind_cpu(struct rt_thread *thread, int cpu);
 
 /**
- * Return nonzero when @p thread carries the scheduler suspended state mask.
- * The scheduler lock must be held.
+ * 当 @p thread 携带调度程序挂起状态掩码时返回非零。必须持有调度程序锁。
  */
 rt_uint8_t rt_sched_thread_is_suspended(struct rt_thread *thread);
 
 /**
- * Stop @p thread's scheduler-managed timeout timer and clear its tracking flag.
- * @return RT_EOK if no active timer needed stopping, otherwise rt_timer_stop()
- *         status. The tracking flag is cleared even if that stop reports error.
- * @note The scheduler lock must be held.
+ * 停止@p thread的调度程序管理的超时计时器并清除其跟踪标志。
+ * @return 如果没有活动定时器需要停止则为 RT_EOK，否则为 rt_timer_stop() 状态。即使停止报告错误，跟踪标志也会被清除。
+ * @note 必须持有调度程序锁。
  */
 rt_err_t rt_sched_thread_timer_stop(struct rt_thread *thread);
 
 /**
- * Mark the embedded timeout timer as scheduler-managed for the current wait.
- * This updates the race-tracking flag; insertion into a timer list is performed
- * by the timer subsystem around this call.
- * @return RT_EOK; scheduler lock must be held.
+ * 将嵌入式超时计时器标记为调度程序管理的当前等待。这会更新竞赛跟踪标志；计时器子系统围绕该调用执行插入计时器列表的操作。
+ * @return RT_EOK;必须持有调度程序锁。
  */
 rt_err_t rt_sched_thread_timer_start(struct rt_thread *thread);
 
 /**
- * Insert @p thread in the appropriate ready queue and update bitmaps/state.
- * Yield/time-slice state determines head-versus-tail placement at its priority.
- * The SMP implementation asserts that the scheduler lock is already held; UP
- * kernel callers likewise serialize the complete state transition externally.
+ * 将 @p thread 插入适当的就绪队列并更新位图/状态。产量/时间片状态确定头与尾放置的优先级。 SMP 实现断言调度程序锁已被持有； UP 内核调用者同样在外部序列化完整的状态转换。
  */
 void rt_sched_insert_thread(struct rt_thread *thread);
 
 /**
- * Remove @p thread from its ready queue and clear now-empty priority bits.
- * The SMP implementation requires the scheduler lock to be held.
+ * 从就绪队列中删除 @p thread 并清除现在为空的优先级位。 SMP 实现需要持有调度程序锁。
  */
 void rt_sched_remove_thread(struct rt_thread *thread);
 
 /**
- * Reserved scheduler/port current-thread accessor.
+ * 保留调度程序/端口当前线程访问器。
  *
- * The common scheduler sources in this tree use rt_thread_self() and do not
- * define this symbol.  Code must not call it unless the selected architecture
- * or scheduler extension provides and documents an implementation.
+ * 此树中的常见调度程序源使用 rt_thread_self() 并且不定义此符号。  代码不得调用它，除非所选的体系结构或调度程序扩展提供并记录了实现。
  */
 struct rt_thread *rt_sched_thread_self(void);
 
