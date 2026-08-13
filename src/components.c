@@ -16,6 +16,19 @@
  * 2015-07-29     Arda.Fu      Add support to use RT_USING_USER_MAIN with IAR
  * 2018-11-22     Jesven       Add secondary cpu boot up
  * 2023-09-15     xqyjlj       perf rt_hw_interrupt_disable/enable
+*/
+
+/**
+ * @file components.c
+ * @brief 串联系统自动初始化、用户 main 线程和调度器启动的内核启动入口。
+ *
+ * 启动链可以概括为：编译器入口 -> rtthread_startup() -> 板级初始化 -> 内核各
+ * 子系统初始化 -> 创建 main/定时器/空闲/回收线程 -> 启动调度器。调度器启动后，
+ * main_thread_entry() 在普通线程上下文中完成组件自动初始化，SMP 配置再唤醒其他
+ * CPU，最后调用用户的 main()。
+ *
+ * 自动初始化不是运行时扫描名称，而是 INIT_xxx_EXPORT() 把函数指针放入具有排序
+ * 关键字的链接段。链接器生成的起止符号界定每一级，下面的循环按地址顺序逐个调用。
  */
 
 #include <rthw.h>
@@ -32,13 +45,12 @@
 #error "RT_MAIN_THREAD_PRIORITY must be < RT_THREAD_PRIORITY_MAX"
 #elif (RT_MAIN_THREAD_PRIORITY < 0)
 #error "RT_MAIN_THREAD_PRIORITY must be non-negative"
-#endif /* RT_MAIN_THREAD_PRIORITY range check */
+#endif /* RT_MAIN_THREAD_PRIORITY 范围检查 */
 #endif /* RT_USING_USER_MAIN */
 
 #ifdef RT_USING_COMPONENTS_INIT
 /*
- * Components Initialization will initialize some driver and components as following
- * order:
+ * 组件自动初始化按下列级别顺序执行：
  * rti_start         --> 0
  * BOARD_EXPORT      --> 1
  * rti_board_end     --> 1.end
@@ -51,13 +63,13 @@
  *
  * rti_end           --> 6.end
  *
- * These automatically initialization, the driver or component initial function must
- * be defined with:
+ * 驱动或组件通过下列宏把自己的初始化函数放入对应链接段：
  * INIT_BOARD_EXPORT(fn);
  * INIT_DEVICE_EXPORT(fn);
  * ...
  * INIT_APP_EXPORT(fn);
- * etc.
+ * 等。数字和字符串是链接排序键，不是运行时优先级。板级阶段只遍历
+ * rti_board_start 与 rti_board_end 之间的项目；其余阶段稍后在 main 线程中遍历。
  */
 static int rti_start(void)
 {
@@ -84,9 +96,12 @@ static int rti_end(void)
 INIT_EXPORT(rti_end, "6.end");
 
 /**
- * @brief  Onboard components initialization. In this function, the board-level
- *         initialization function will be called to complete the initialization
- *         of the on-board peripherals.
+ * @brief 执行板级自动初始化函数。
+ *
+ * 该函数遍历 BOARD_EXPORT 所在区间，通常用于仍需在调度器启动前完成的片上外设、
+ * 驱动早期资源等初始化。RT_DEBUGING_AUTO_INIT 配置会保留函数名描述符并打印每个
+ * 函数及其返回值；普通配置只保存函数指针以减小镜像。初始化函数的返回值仅用于
+ * 调试输出，本循环不会因某项失败而中止后续项目。
  */
 void rt_components_board_init(void)
 {
@@ -110,7 +125,11 @@ void rt_components_board_init(void)
 }
 
 /**
- * @brief  RT-Thread Components Initialization.
+ * @brief 执行板级之后的所有组件自动初始化函数。
+ *
+ * 调用时已经处于 main 线程上下文且调度器可用，因此设备、组件、文件系统、环境和
+ * 应用级初始化可以使用需要线程环境的内核服务。遍历范围从 rti_board_end 之后开始，
+ * 到 rti_end 之前结束，顺序由 INIT_DEVICE_EXPORT 至 INIT_APP_EXPORT 的等级决定。
  */
 void rt_components_init(void)
 {
@@ -144,24 +163,24 @@ int rtthread_startup(void);
 
 #ifdef __ARMCC_VERSION
 extern int $Super$$main(void);
-/* re-define main function */
+/* ARMCC 的子/超符号机制：用包装入口先启动 RT-Thread，再由 main 线程调用原 main。 */
 int $Sub$$main(void)
 {
     rtthread_startup();
     return 0;
 }
 #elif defined(__ICCARM__)
-/* __low_level_init will auto called by IAR cstartup */
+/* IAR 启动代码会自动调用 __low_level_init。 */
 extern void __iar_data_init3(void);
 int __low_level_init(void)
 {
-    // call IAR table copy function.
+    /* 先完成 IAR 数据段复制，再进入 RT-Thread 启动链。 */
     __iar_data_init3();
     rtthread_startup();
     return 0;
 }
 #elif defined(__GNUC__)
-/* Add -eentry to arm-none-eabi-gcc argument */
+/* GCC 链接时通过 -eentry 指定此函数为镜像入口。 */
 int entry(void)
 {
     rtthread_startup();
@@ -170,18 +189,21 @@ int entry(void)
 #endif
 
 #ifndef RT_USING_HEAP
-/* if there is not enable heap, we should use static thread and stack. */
+/* 未启用堆时，main 线程控制块和栈必须由内核静态提供。 */
 rt_align(RT_ALIGN_SIZE)
 static rt_uint8_t main_thread_stack[RT_MAIN_THREAD_STACK_SIZE];
 struct rt_thread main_thread;
 #endif /* RT_USING_HEAP */
 
 /**
- * @brief  The system main thread. In this thread will call the rt_components_init()
- *         for initialization of RT-Thread Components and call the user's programming
- *         entry main().
+ * @brief 系统 main 线程入口。
  *
- * @param  parameter is the arg of the thread.
+ * 该线程是启动调度器后第一个承载用户初始化逻辑的普通线程：先调用
+ * rt_components_init()，SMP 下再启动从核，最后调用工具链对应的用户 main()。
+ * 把后期组件初始化放在线程中，意味着初始化代码可以被调度，也可以使用部分 IPC；
+ * 但此时应用自身其他线程是否存在，取决于各初始化函数的创建顺序。
+ *
+ * @param parameter 线程参数；本入口不使用它。
  */
 static void main_thread_entry(void *parameter)
 {
@@ -189,18 +211,18 @@ static void main_thread_entry(void *parameter)
     RT_UNUSED(parameter);
 
 #ifdef RT_USING_COMPONENTS_INIT
-    /* RT-Thread components initialization */
+    /* 完成设备、组件、文件系统、环境和应用级自动初始化。 */
     rt_components_init();
 #endif /* RT_USING_COMPONENTS_INIT */
 
 #ifdef RT_USING_SMP
     rt_hw_secondary_cpu_up();
 #endif /* RT_USING_SMP */
-    /* invoke system main function */
+    /* 转入用户程序入口；不同工具链采用各自的 main 包装机制。 */
 #ifdef __ARMCC_VERSION
     {
         extern int $Super$$main(void);
-        $Super$$main(); /* for ARMCC. */
+        $Super$$main(); /* ARMCC 的 $Super$$main 表示被包装的原始 main。 */
     }
 #elif defined(__ICCARM__) || defined(__GNUC__) || defined(__TASKING__) || defined(__TI_COMPILER_VERSION__)
     main();
@@ -208,8 +230,11 @@ static void main_thread_entry(void *parameter)
 }
 
 /**
- * @brief  This function will create and start the main thread, but this thread
- *         will not run until the scheduler starts.
+ * @brief 创建并置为就绪态 main 线程。
+ *
+ * 启用堆时动态创建线程；未启用堆时使用本文件的静态线程控制块和静态栈。这里的
+ * rt_thread_startup() 只是把线程加入就绪队列，因为首次调用时调度器尚未启动，
+ * main_thread_entry() 要等 rt_system_scheduler_start() 选中它之后才真正执行。
  */
 void rt_application_init(void)
 {
@@ -227,7 +252,7 @@ void rt_application_init(void)
                             main_thread_stack, sizeof(main_thread_stack), RT_MAIN_THREAD_PRIORITY, 20);
     RT_ASSERT(result == RT_EOK);
 
-    /* if not define RT_USING_HEAP, using to eliminate the warning */
+    /* 某些关闭断言的构建不会读取 result，显式丢弃可消除编译器警告。 */
     (void)result;
 #endif /* RT_USING_HEAP */
 
@@ -235,10 +260,14 @@ void rt_application_init(void)
 }
 
 /**
- * @brief  This function will call all levels of initialization functions to complete
- *         the initialization of the system, and finally start the scheduler.
+ * @brief 完成 RT-Thread 内核启动并启动第一次线程调度。
  *
- * @return Normally never returns. If 0 is returned, the scheduler failed.
+ * 调用顺序经过精心安排：板级代码先建立时钟和堆；随后初始化定时器、调度器和
+ * 信号子系统；再创建 main、定时器服务、空闲和僵尸回收线程。所有可运行线程都
+ * 就绪后才启动调度器。SMP 的全局 CPU 锁在切换前保持锁定，由上下文切换路径恢复
+ * 正确状态，从而避免多个 CPU 在启动边界同时操作调度数据。
+ *
+ * @return 正常情况下永不返回；若意外返回 0，表示调度器启动失败。
  */
 int rtthread_startup(void)
 {
@@ -247,45 +276,45 @@ int rtthread_startup(void)
 #endif
     rt_hw_local_irq_disable();
 
-    /* board level initialization
-     * NOTE: please initialize heap inside board initialization.
+    /* 板级初始化应建立硬件时钟、中断控制器，并在这里准备好内核堆。
+     * 注意：后面的动态线程/对象创建可能立即依赖堆。
      */
     rt_hw_board_init();
 
-    /* show RT-Thread version */
+    /* 输出版本横幅，便于确认实际运行的内核配置。 */
     rt_show_version();
 
-    /* timer system initialization */
+    /* 初始化硬/软定时器容器。 */
     rt_system_timer_init();
 
-    /* scheduler system initialization */
+    /* 初始化就绪队列、优先级位图和每 CPU 调度状态。 */
     rt_system_scheduler_init();
 
 #ifdef RT_USING_SIGNALS
-    /* signal system initialization */
+    /* 初始化线程信号子系统的全局资源。 */
     rt_system_signal_init();
 #endif /* RT_USING_SIGNALS */
 
-    /* create init_thread */
+    /* 创建 main 线程；它承担后期组件初始化和用户 main。 */
     rt_application_init();
 
-    /* timer thread initialization */
+    /* 若启用软定时器，创建执行回调的定时器服务线程。 */
     rt_system_timer_thread_init();
 
-    /* idle thread initialization */
+    /* 每个 CPU 创建一个最低优先级的兜底空闲线程。 */
     rt_thread_idle_init();
 
-    /* defunct thread initialization */
+    /* 建立退出线程的延迟回收设施。 */
     rt_thread_defunct_init();
 
 #ifdef RT_USING_SMP
     rt_hw_spin_lock(&_cpus_lock);
 #endif /* RT_USING_SMP */
 
-    /* start scheduler */
+    /* 选择最高优先级就绪线程并完成第一次上下文切换。 */
     rt_system_scheduler_start();
 
-    /* never reach here */
+    /* 正常调度永不返回到启动栈。 */
     return 0;
 }
 #endif /* RT_USING_USER_MAIN */

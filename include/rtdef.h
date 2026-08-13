@@ -3,64 +3,64 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2007-01-10     Bernard      the first version
- * 2008-07-12     Bernard      remove all rt_int8, rt_uint32_t etc typedef
- * 2010-10-26     yi.qiu       add module support
- * 2010-11-10     Bernard      add cleanup callback function in thread exit.
- * 2011-05-09     Bernard      use builtin va_arg in GCC 4.x
- * 2012-11-16     Bernard      change RT_NULL from ((void*)0) to 0.
- * 2012-12-29     Bernard      change the RT_USING_MEMPOOL location and add
- *                             RT_USING_MEMHEAP condition.
- * 2012-12-30     Bernard      add more control command for graphic.
- * 2013-01-09     Bernard      change version number.
- * 2015-02-01     Bernard      change version number to v2.1.0
- * 2017-08-31     Bernard      change version number to v3.0.0
- * 2017-11-30     Bernard      change version number to v3.0.1
- * 2017-12-27     Bernard      change version number to v3.0.2
- * 2018-02-24     Bernard      change version number to v3.0.3
- * 2018-04-25     Bernard      change version number to v3.0.4
- * 2018-05-31     Bernard      change version number to v3.1.0
- * 2018-09-04     Bernard      change version number to v3.1.1
- * 2018-09-14     Bernard      apply Apache License v2.0 to RT-Thread Kernel
- * 2018-10-13     Bernard      change version number to v4.0.0
- * 2018-10-02     Bernard      add 64bit arch support
- * 2018-11-22     Jesven       add smp member to struct rt_thread
- *                             add struct rt_cpu
- *                             add smp relevant macros
- * 2019-01-27     Bernard      change version number to v4.0.1
- * 2019-05-17     Bernard      change version number to v4.0.2
- * 2019-12-20     Bernard      change version number to v4.0.3
- * 2020-08-10     Meco Man     add macro for struct rt_device_ops
- * 2020-10-23     Meco Man     define maximum value of ipc type
- * 2021-03-19     Meco Man     add security devices
- * 2021-05-10     armink       change version number to v4.0.4
- * 2021-11-19     Meco Man     change version number to v4.1.0
- * 2021-12-21     Meco Man     re-implement RT_UNUSED
- * 2022-01-01     Gabriel      improve hooking method
- * 2022-01-07     Gabriel      move some __on_rt_xxxxx_hook to dedicated c source files
- * 2022-01-12     Meco Man     remove RT_THREAD_BLOCK
- * 2022-04-20     Meco Man     change version number to v4.1.1
- * 2022-04-21     THEWON       add macro RT_VERSION_CHECK
- * 2022-06-29     Meco Man     add RT_USING_LIBC and standard libc headers
- * 2022-08-16     Meco Man     change version number to v5.0.0
- * 2022-09-12     Meco Man     define rt_ssize_t
- * 2022-12-20     Meco Man     add const name for rt_object
- * 2023-04-01     Chushicheng  change version number to v5.0.1
- * 2023-05-20     Bernard      add stdc atomic detection.
- * 2023-09-15     xqyjlj       perf rt_hw_interrupt_disable/enable
- * 2023-10-10     Chushicheng  change version number to v5.1.0
- * 2023-10-11     zmshahaha    move specific devices related and driver to components/drivers
- * 2023-11-21     Meco Man     add RT_USING_NANO macro
- * 2023-11-17     xqyjlj       add process group and session support
- * 2023-12-01     Shell        Support of dynamic device
- * 2023-12-18     xqyjlj       add rt_always_inline
- * 2023-12-22     Shell        Support hook list
- * 2024-01-18     Shell        Separate basical types to a rttypes.h
- *                             Separate the compiler portings to rtcompiler.h
- * 2024-03-30     Meco Man     update version number to v5.2.0
- * 2025-11-10     Rbb666       update version number to v5.3.0
+ * 变更记录：
+ * 日期           作者         说明
+ * 2007-01-10     Bernard      初始版本
+ * 2008-07-12     Bernard      移除所有 rt_int8、rt_uint32_t 等 typedef
+ * 2010-10-26     yi.qiu       增加模块支持
+ * 2010-11-10     Bernard      在线程退出时增加清理回调函数。
+ * 2011-05-09     Bernard      在 GCC 4.x 中使用内建 va_arg
+ * 2012-11-16     Bernard      将 RT_NULL 从 ((void*)0) 改为 0。
+ * 2012-12-29     Bernard      调整 RT_USING_MEMPOOL 的位置，并增加
+ *                             RT_USING_MEMHEAP 条件。
+ * 2012-12-30     Bernard      为图形设备增加更多控制命令。
+ * 2013-01-09     Bernard      修改版本号。
+ * 2015-02-01     Bernard      将版本号改为 v2.1.0
+ * 2017-08-31     Bernard      将版本号改为 v3.0.0
+ * 2017-11-30     Bernard      将版本号改为 v3.0.1
+ * 2017-12-27     Bernard      将版本号改为 v3.0.2
+ * 2018-02-24     Bernard      将版本号改为 v3.0.3
+ * 2018-04-25     Bernard      将版本号改为 v3.0.4
+ * 2018-05-31     Bernard      将版本号改为 v3.1.0
+ * 2018-09-04     Bernard      将版本号改为 v3.1.1
+ * 2018-09-14     Bernard      为 RT-Thread Kernel 应用 Apache License v2.0
+ * 2018-10-13     Bernard      将版本号改为 v4.0.0
+ * 2018-10-02     Bernard      增加 64 位架构支持
+ * 2018-11-22     Jesven       为 struct rt_thread 增加 smp 成员
+ *                             增加 struct rt_cpu
+ *                             增加 smp 相关宏
+ * 2019-01-27     Bernard      将版本号改为 v4.0.1
+ * 2019-05-17     Bernard      将版本号改为 v4.0.2
+ * 2019-12-20     Bernard      将版本号改为 v4.0.3
+ * 2020-08-10     Meco Man     为 struct rt_device_ops 增加宏
+ * 2020-10-23     Meco Man     定义 IPC 类型的最大值
+ * 2021-03-19     Meco Man     增加安全设备
+ * 2021-05-10     armink       将版本号改为 v4.0.4
+ * 2021-11-19     Meco Man     将版本号改为 v4.1.0
+ * 2021-12-21     Meco Man     重新实现 RT_UNUSED
+ * 2022-01-01     Gabriel      改进钩子机制
+ * 2022-01-07     Gabriel      将部分 __on_rt_xxxxx_hook 移至专用 C 源文件
+ * 2022-01-12     Meco Man     移除 RT_THREAD_BLOCK
+ * 2022-04-20     Meco Man     将版本号改为 v4.1.1
+ * 2022-04-21     THEWON       增加宏 RT_VERSION_CHECK
+ * 2022-06-29     Meco Man     增加 RT_USING_LIBC 和标准 libc 头文件
+ * 2022-08-16     Meco Man     将版本号改为 v5.0.0
+ * 2022-09-12     Meco Man     定义 rt_ssize_t
+ * 2022-12-20     Meco Man     为 rt_object 增加 const 名称
+ * 2023-04-01     Chushicheng  将版本号改为 v5.0.1
+ * 2023-05-20     Bernard      增加 stdc 原子操作检测。
+ * 2023-09-15     xqyjlj       优化 rt_hw_interrupt_disable/enable
+ * 2023-10-10     Chushicheng  将版本号改为 v5.1.0
+ * 2023-10-11     zmshahaha    将特定设备相关代码和驱动移至 components/drivers
+ * 2023-11-21     Meco Man     增加 RT_USING_NANO 宏
+ * 2023-11-17     xqyjlj       增加进程组和会话支持
+ * 2023-12-01     Shell        支持动态设备
+ * 2023-12-18     xqyjlj       增加 rt_always_inline
+ * 2023-12-22     Shell        支持钩子列表
+ * 2024-01-18     Shell        将基础类型拆分到 rttypes.h
+ *                             将编译器移植代码拆分到 rtcompiler.h
+ * 2024-03-30     Meco Man     将版本号更新为 v5.2.0
+ * 2025-11-10     Rbb666       将版本号更新为 v5.3.0
  */
 
 #ifndef __RT_DEF_H__
@@ -68,25 +68,20 @@
 
 /**
  * @file rtdef.h
- * @brief Core configuration-independent data model shared by the RT-Thread kernel.
+ * @brief RT-Thread 内核共享的、与具体配置无关的核心数据模型。
  *
- * This header is the central description of the objects manipulated by the
- * kernel.  It contains version encoding, initialization-export metadata,
- * object class identifiers, timer and thread control blocks, IPC objects,
- * memory-manager metadata, and the base device object.  Public operations on
- * these types are declared in rtthread.h; scheduler-private fields are injected
- * through rtsched.h; fixed-width and intrusive-list types come from rttypes.h.
+ * 本头文件集中描述内核所操作的对象，包含版本编码、初始化导出元数据、
+ * 对象类别标识符、定时器和线程控制块、IPC 对象、内存管理器元数据以及
+ * 设备基类对象。这些类型的公开操作在 rtthread.h 中声明；调度器私有字段
+ * 由 rtsched.h 注入；定宽整数和侵入式链表类型来自 rttypes.h。
  *
- * Most structures in this file implement C-style inheritance: the first field
- * of a derived object is its parent object.  For example, rt_thread starts with
- * rt_object, while rt_semaphore starts with rt_ipc_object, which itself starts
- * with rt_object.  This layout lets generic object-management code safely cast
- * a derived object to its base type.
+ * 本文件中的多数结构体采用 C 风格继承：派生对象的第一个字段是其父对象。
+ * 例如，rt_thread 以 rt_object 开头；rt_semaphore 以 rt_ipc_object 开头，
+ * 而 rt_ipc_object 自身又以 rt_object 开头。该布局使通用对象管理代码能够
+ * 安全地将派生对象转换为其基类型。
  *
- * Many fields are conditionally compiled.  Their presence, and therefore the
- * binary layout of the structures, depends on the target BSP's rtconfig.h.
- * Kernel objects must never be exchanged between binaries built with different
- * configurations.
+ * 许多字段受条件编译控制。字段是否存在以及结构体的二进制布局取决于目标 BSP
+ * 的 rtconfig.h。绝不能在由不同配置构建的二进制文件之间交换内核对象。
  */
 
 #include "rtsched.h"
@@ -105,101 +100,93 @@ extern "C" {
 /**@{*/
 
 /*
- * RT-Thread version information.
+ * RT-Thread 版本信息。
  *
- * RT_VERSION_CHECK() maps a semantic version X.Y.Z to X * 10000 + Y * 100 + Z.
- * The monotonic integer is intended for preprocessor comparisons; it is not a
- * packed bit field and must not be decoded with shifts or masks.
+ * RT_VERSION_CHECK() 将语义版本 X.Y.Z 映射为 X * 10000 + Y * 100 + Z。
+ * 该单调递增整数用于预处理器比较；它不是打包位域，不能用移位或掩码解码。
  */
-#define RT_VERSION_MAJOR                5               /**< Major version number (X.x.x) */
-#define RT_VERSION_MINOR                3               /**< Minor version number (x.X.x) */
-#define RT_VERSION_PATCH                0               /**< Patch version number (x.x.X) */
+#define RT_VERSION_MAJOR                5               /**< 主版本号 (X.x.x) */
+#define RT_VERSION_MINOR                3               /**< 次版本号 (x.X.x) */
+#define RT_VERSION_PATCH                0               /**< 修订版本号 (x.x.X) */
 
-/* e.g. #if (RTTHREAD_VERSION >= RT_VERSION_CHECK(4, 1, 0) */
+/* 例如#if (RTTHREAD_VERSION >= RT_VERSION_CHECK(4, 1, 0) */
 #define RT_VERSION_CHECK(major, minor, revise)          ((major * 10000U) + (minor * 100U) + revise)
 
-/* RT-Thread version */
+/* RT-Thread 版本。 */
 #define RTTHREAD_VERSION                RT_VERSION_CHECK(RT_VERSION_MAJOR, RT_VERSION_MINOR, RT_VERSION_PATCH)
 
 /**@}*/
 
 /*
- * Maximum values used by ABI-visible counters.  A libc-enabled build reuses
- * the standard integer limits; a freestanding build provides equivalent
- * constants without depending on <stdint.h> limit macros.
+ * ABI 可见计数器使用的最大值。启用 libc 的构建复用标准整数上限；
+ * 独立运行的构建提供等价常量，而不依赖 <stdint.h> 的上限宏。
  */
 #ifdef RT_USING_LIBC
-#define RT_UINT8_MAX                    UINT8_MAX       /**< Maximum number of UINT8 */
-#define RT_UINT16_MAX                   UINT16_MAX      /**< Maximum number of UINT16 */
-#define RT_UINT32_MAX                   UINT32_MAX      /**< Maximum number of UINT32 */
-#define RT_UINT64_MAX                   UINT64_MAX      /**< Maximum number of UINT64 */
+#define RT_UINT8_MAX                    UINT8_MAX       /**< UINT8 可表示的最大值 */
+#define RT_UINT16_MAX                   UINT16_MAX      /**< UINT16 可表示的最大值 */
+#define RT_UINT32_MAX                   UINT32_MAX      /**< UINT32 可表示的最大值 */
+#define RT_UINT64_MAX                   UINT64_MAX      /**< UINT64 可表示的最大值 */
 #else
-#define RT_UINT8_MAX                    0xFFU                 /**< Maximum number of UINT8 */
-#define RT_UINT16_MAX                   0xFFFFU               /**< Maximum number of UINT16 */
-#define RT_UINT32_MAX                   0xFFFFFFFFUL          /**< Maximum number of UINT32 */
-#define RT_UINT64_MAX                   0xFFFFFFFFFFFFFFFFULL /**< Maximum number of UINT64 */
+#define RT_UINT8_MAX                    0xFFU                 /**< UINT8 可表示的最大值 */
+#define RT_UINT16_MAX                   0xFFFFU               /**< UINT16 可表示的最大值 */
+#define RT_UINT32_MAX                   0xFFFFFFFFUL          /**< UINT32 可表示的最大值 */
+#define RT_UINT64_MAX                   0xFFFFFFFFFFFFFFFFULL /**< UINT64 可表示的最大值 */
 #endif /* RT_USING_LIBC */
 
-#define RT_TICK_MAX                     RT_UINT32_MAX   /**< Maximum number of tick */
+#define RT_TICK_MAX                     RT_UINT32_MAX   /**< tick 可表示的最大值 */
 
 /*
- * Public bounds for IPC counters.  Most correspond to the current field width;
- * RT_MUTEX_VALUE_MAX is retained as a compatibility constant even though the
- * current mutex control block has no `value` field and uses `hold` instead.
- * Runtime APIs may impose stricter limits.
+ * IPC 计数器的公开上限。多数上限对应当前字段宽度；尽管当前互斥量控制块
+ * 没有 `value` 字段而使用 `hold`，仍保留 RT_MUTEX_VALUE_MAX 以保持兼容。
+ * 运行时 API 可能施加更严格的限制。
  */
-#define RT_SEM_VALUE_MAX                RT_UINT16_MAX   /**< Maximum number of semaphore .value */
-#define RT_MUTEX_VALUE_MAX              RT_UINT16_MAX   /**< Legacy mutex-value compatibility bound. */
-#define RT_MUTEX_HOLD_MAX               RT_UINT8_MAX    /**< Maximum number of mutex .hold */
-#define RT_MB_ENTRY_MAX                 RT_UINT16_MAX   /**< Maximum number of mailbox .entry */
-#define RT_MQ_ENTRY_MAX                 RT_UINT16_MAX   /**< Maximum number of message queue .entry */
+#define RT_SEM_VALUE_MAX                RT_UINT16_MAX   /**< 信号量 .value 的最大值 */
+#define RT_MUTEX_VALUE_MAX              RT_UINT16_MAX   /**< 旧版互斥量 value 的兼容性上限。 */
+#define RT_MUTEX_HOLD_MAX               RT_UINT8_MAX    /**< 互斥量 .hold 的最大值 */
+#define RT_MB_ENTRY_MAX                 RT_UINT16_MAX   /**< 邮箱 .entry 的最大值 */
+#define RT_MQ_ENTRY_MAX                 RT_UINT16_MAX   /**< 消息队列 .entry 的最大值 */
 
-/* Common utilities. */
+/* 通用工具。 */
 
-/** Explicitly mark an expression as intentionally unused without evaluating it twice. */
+/** 显式标记表达式有意未使用，且不会对其求值两次。 */
 #define RT_UNUSED(x)                   ((void)(x))
 
 /**
- * Compile-time assertion usable by pre-C11 compilers.
+ * 可供 C11 之前的编译器使用的编译期断言。
  *
- * A false expression creates an array with a negative bound and therefore a
- * compilation error.  @p name becomes part of the generated typedef so each
- * assertion in one scope must use a unique identifier.
+ * 假表达式会创建长度为负数的数组，从而导致编译错误。@p name 会成为生成的
+ * typedef 的一部分，因此同一作用域内的每个断言必须使用唯一标识符。
  */
 #define RT_STATIC_ASSERT(name, expn) typedef char _static_assert_##name[(expn)?1:-1]
 
-/* Compiler Related Definitions */
+/* 与编译器相关的定义。 */
 #include "rtcompiler.h"
 
 /**
- * @name Automatic initialization export
+ * @name 自动初始化导出
  *
- * INIT_EXPORT() places a function pointer, and optionally diagnostic metadata,
- * into a linker section whose suffix is the textual @p level.  The linker
- * script keeps and sorts the .rti_fn.* sections.  Startup code then walks the
- * resulting range in lexical level order.
+ * INIT_EXPORT() 将函数指针以及可选的诊断元数据放入链接器段；该段后缀为
+ * 文本形式的 @p level。链接脚本保留并排序 .rti_fn.* 段；启动代码随后按
+ * 级别的字典顺序遍历得到的范围。
  *
- * An exported initializer has signature `int fn(void)`.  Board-level entries
- * run before the scheduler starts; the remaining component levels normally run
- * from the main initialization thread.  The macros expand to nothing when
- * RT_USING_COMPONENTS_INIT is disabled, so exporting a function does not by
- * itself guarantee that it is present in a particular firmware image.
+ * 导出的初始化函数签名为 `int fn(void)`。板级条目在调度器启动前运行；其余
+ * 组件级别通常由主初始化线程运行。禁用 RT_USING_COMPONENTS_INIT 时，这些宏
+ * 展开为空，因此导出函数本身并不能保证它出现在某个固件镜像中。
  *
- * MSVC cannot use the same ELF-style section attributes as GCC-compatible
- * compilers, so it stores an explicit level string in a common section.  With
- * RT_DEBUGING_AUTO_INIT, the function name is also retained for diagnostics.
+ * MSVC 无法使用与 GCC 兼容编译器相同的 ELF 风格段属性，因此它在公共段中保存
+ * 显式级别字符串。启用 RT_DEBUGING_AUTO_INIT 时，还会保留函数名以便诊断。
  * @{ */
 #ifdef RT_USING_COMPONENTS_INIT
-/** Prototype required for every automatically exported initializer. */
+/** 每个自动导出的初始化函数都必须符合的原型。 */
 typedef int (*init_fn_t)(void);
 #ifdef _MSC_VER
 #pragma section("rti_fn$f",read)
     #ifdef RT_DEBUGING_AUTO_INIT
         struct rt_init_desc
         {
-            const char* level;       /**< Textual ordering key, for example ".rti_fn.3". */
-            const init_fn_t fn;      /**< Initializer to invoke. */
-            const char* fn_name;     /**< Function name retained for startup diagnostics. */
+            const char* level;       /**< 文本排序键，例如 ".rti_fn.3"。 */
+            const init_fn_t fn;      /**< 要调用的初始化函数。 */
+            const char* fn_name;     /**< 为启动诊断保留的函数名。 */
         };
         #define INIT_EXPORT(fn, level)                                  \
                                 const char __rti_level_##fn[] = ".rti_fn." level;       \
@@ -210,8 +197,8 @@ typedef int (*init_fn_t)(void);
     #else
         struct rt_init_desc
         {
-            const char* level;       /**< Textual ordering key used by the MSVC startup walker. */
-            const init_fn_t fn;      /**< Initializer to invoke. */
+            const char* level;       /**< MSVC 启动遍历器使用的文本排序键。 */
+            const init_fn_t fn;      /**< 要调用的初始化函数。 */
         };
         #define INIT_EXPORT(fn, level)                                  \
                                 const char __rti_level_##fn[] = ".rti_fn." level;       \
@@ -223,8 +210,8 @@ typedef int (*init_fn_t)(void);
     #ifdef RT_DEBUGING_AUTO_INIT
         struct rt_init_desc
         {
-            const char* fn_name;     /**< Function name retained for startup diagnostics. */
-            const init_fn_t fn;      /**< Initializer placed in this descriptor's linker section. */
+            const char* fn_name;     /**< 为启动诊断保留的函数名。 */
+            const init_fn_t fn;      /**< 放入此描述符链接器段的初始化函数。 */
         };
         #define INIT_EXPORT(fn, level)                                                       \
             const char __rti_##fn##_name[] = #fn;                                            \
@@ -239,39 +226,39 @@ typedef int (*init_fn_t)(void);
 #define INIT_EXPORT(fn, level)
 #endif /* RT_USING_COMPONENTS_INIT */
 
-/* Board-stage routines are called by rt_components_board_init(). */
+/* 板级阶段例程由 rt_components_board_init() 调用。 */
 #define INIT_BOARD_EXPORT(fn)           INIT_EXPORT(fn, "1")
 
-/* Core facilities: CPU, memory, interrupt controller, and fundamental buses. */
+/* 核心设施：CPU、内存、中断控制器和基础总线。 */
 #define INIT_CORE_EXPORT(fn)            INIT_EXPORT(fn, "1.0")
-/* Subsystems required by later drivers: system timer, clocks, and pin control. */
+/* 后续驱动所需的子系统：系统定时器、时钟和引脚控制。 */
 #define INIT_SUBSYS_EXPORT(fn)          INIT_EXPORT(fn, "1.1")
-/* Platform-specific services and other late board-stage code. */
+/* 平台专用服务及其他较晚执行的板级阶段代码。 */
 #define INIT_PLATFORM_EXPORT(fn)        INIT_EXPORT(fn, "1.2")
 
-/* The following levels normally run in main_thread_entry(). */
-/* Pure-software preparation that does not require initialized devices. */
+/* 以下级别通常在 main_thread_entry() 中运行。 */
+/* 不依赖已初始化设备的纯软件准备工作。 */
 #define INIT_PREV_EXPORT(fn)            INIT_EXPORT(fn, "2")
-/* Device registration and hardware-driver initialization. */
+/* 设备注册和硬件驱动初始化。 */
 #define INIT_DEVICE_EXPORT(fn)          INIT_EXPORT(fn, "3")
-/* Middleware such as DFS and protocol stacks. */
+/* DFS、协议栈等中间件。 */
 #define INIT_COMPONENT_EXPORT(fn)       INIT_EXPORT(fn, "4")
-/* Runtime environment setup, for example mounting storage. */
+/* 运行环境设置，例如挂载存储设备。 */
 #define INIT_ENV_EXPORT(fn)             INIT_EXPORT(fn, "5")
-/* Application services that depend on the environment. */
+/* 依赖运行环境的应用服务。 */
 #define INIT_APP_EXPORT(fn)             INIT_EXPORT(fn, "6")
 
-/* Initialization that specifically requires a mounted file system. */
+/* 明确要求文件系统已挂载的初始化。 */
 #define INIT_FS_EXPORT(fn)              INIT_EXPORT(fn, "6.0")
 /*
- * Per-secondary-CPU initialization walked by rt_dm_secondary_cpu_init(); the
- * BSP/architecture secondary-startup path decides when to invoke that walker.
+ * rt_dm_secondary_cpu_init() 遍历的每个次级 CPU 初始化项；BSP/架构的次级
+ * CPU 启动路径决定何时调用该遍历器。
  */
 #define INIT_SECONDARY_CPU_EXPORT(fn)   INIT_EXPORT(fn, "7")
 /** @} */
 
 #if !defined(RT_USING_FINSH)
-/* define these to empty, even if not include finsh.h file */
+/* 即使未包含 finsh.h 文件，也将这些宏定义为空。 */
 #define FINSH_FUNCTION_EXPORT(name, desc)
 #define FINSH_FUNCTION_EXPORT_ALIAS(name, alias, desc)
 
@@ -281,21 +268,20 @@ typedef int (*init_fn_t)(void);
 #define FINSH_FUNCTION_EXPORT_CMD(name, cmd, desc)
 #endif
 
-/** Number of event bits carried by an rt_event object. */
+/** 一个 rt_event 对象包含的事件位数量。 */
 #define RT_EVENT_LENGTH                 32
 
 /*
- * Default page geometry shared by the slab allocator and virtual-memory/MMU
- * components.  The mask and shift assume 4096 bytes == 1 << 12.
+ * slab 分配器和虚拟内存/MMU 组件共用的默认页几何参数。掩码和移位假定
+ * 4096 字节等于 1 << 12。
  */
 #define RT_MM_PAGE_SIZE                 4096
 #define RT_MM_PAGE_MASK                 (RT_MM_PAGE_SIZE - 1)
 #define RT_MM_PAGE_BITS                 12
 
 /*
- * Allocation indirection used by kernel object creation.  A port or protected
- * build may override these macros before including this file to route kernel
- * metadata to a dedicated allocator.  The default uses the system heap API.
+ * 内核对象创建时使用的分配间接层。移植层或受保护构建可在包含本文件前重定义
+ * 这些宏，将内核元数据分配到专用分配器；默认使用系统堆 API。
  */
 #ifndef RT_KERNEL_MALLOC
 #define RT_KERNEL_MALLOC(sz)            rt_malloc(sz)
@@ -313,13 +299,12 @@ typedef int (*init_fn_t)(void);
  * @ingroup group_basic_definition
  *
  * @def RT_IS_ALIGN(addr, align)
- * Return true(1) or false(0).
- *     RT_IS_ALIGN(128, 4) is judging whether 128 aligns with 4.
- *     The result is 1, which means 128 aligns with 4.
- * @note If the address is NULL, false(0) will be returned
+ * 返回真(1)或假(0)。
+ *     RT_IS_ALIGN(128, 4) 用于判断 128 是否按 4 对齐。
+ *     结果为 1，表示 128 按 4 对齐。
+ * @note 地址为 NULL 时返回假(0)。
  * @note @p align must be a nonzero power of two.  @p addr may be evaluated
- *       twice (the second test can be short-circuited), so pass a
- *       side-effect-free integer/pointer-width expression.
+ *       两次（第二次检查可能短路），因此应传入无副作用的整数或指针宽度表达式。
  */
 #define RT_IS_ALIGN(addr, align) ((!(addr & (align - 1))) && (addr != RT_NULL))
 
@@ -327,12 +312,11 @@ typedef int (*init_fn_t)(void);
  * @ingroup group_basic_definition
  *
  * @def RT_ALIGN(size, align)
- * Return the most contiguous size aligned at specified width. RT_ALIGN(13, 4)
- * would return 16.
- * @note align Must be an integer power of 2 or the result will be incorrect
+ * 返回不小于指定大小、且按指定宽度对齐的最小连续大小。RT_ALIGN(13, 4)
+ * 返回 16。
+ * @note align 必须是 2 的整数次幂，否则结果不正确。
  * @note @p align is expanded more than once; do not pass an expression with
- *       increments, function calls, or other side effects.  Addition can wrap
- *       if @p size is too close to the maximum representable value.
+ *       自增、函数调用或其他副作用。若 @p size 过于接近可表示最大值，加法可能溢出回绕。
  */
 #define RT_ALIGN(size, align)           (((size) + (align) - 1) & ~((align) - 1))
 
@@ -340,10 +324,10 @@ typedef int (*init_fn_t)(void);
  * @ingroup group_basic_definition
  *
  * @def RT_ALIGN_DOWN(size, align)
- * Return the down number of aligned at specified width. RT_ALIGN_DOWN(13, 4)
- * would return 12.
- * @note align Must be an integer power of 2 or the result will be incorrect
- * @note Use side-effect-free arguments; no run-time validation is performed.
+ * 返回不大于指定大小、且按指定宽度向下对齐的值。RT_ALIGN_DOWN(13, 4)
+ * 返回 12。
+ * @note align 必须是 2 的整数次幂，否则结果不正确。
+ * @note 请使用无副作用参数；本宏不执行运行时校验。
  */
 #define RT_ALIGN_DOWN(size, align)      ((size) & ~((align) - 1))
 
@@ -352,134 +336,116 @@ typedef int (*init_fn_t)(void);
  * @{
  */
 
-/* Kernel object flags occupy the rt_object::flag byte. */
-#define RT_OBJECT_FLAG_MODULE           0x80            /**< is module object. */
+/* 内核对象标志位存放在 rt_object::flag 字节中。 */
+#define RT_OBJECT_FLAG_MODULE           0x80            /**< 表示模块对象。 */
 
 /**
- * @brief Common header embedded at offset zero in every managed kernel object.
+ * @brief 嵌入每个受管理内核对象起始位置的通用头部。
  *
- * The object manager normally links an initialized instance into the class
- * container selected by @ref rt_object_class_type.  Under RT_USING_MODULE, an
- * object created by the current loadable module is linked to that module's
- * private object list instead.  The generic rt_object_init() path sets
- * RT_Object_Class_Static in the high bit of `type` and pairs with detach;
- * rt_object_allocate() leaves it clear and pairs with delete.  This attribute
- * identifies the object initialization/lifetime path, not necessarily the
- * backing storage's physical origin, because class wrappers can define their
- * own allocation/destroy sequence.  Code that changes `type` or `list` directly
- * can corrupt registry or lifetime state and must use object/class APIs.
+ * 对象管理器通常将已初始化实例链接到由 @ref rt_object_class_type 选择的类别
+ * 容器。启用 RT_USING_MODULE 时，当前可加载模块创建的对象改为链接到该模块的私有
+ * 对象列表。通用 rt_object_init() 路径会在 `type` 的高位设置
+ * RT_Object_Class_Static，并与 detach 配对；rt_object_allocate() 保持该位清零，
+ * 并与 delete 配对。此属性标识对象的初始化和生命周期路径，而不必然表示底层存储的
+ * 物理来源，因为类别包装器可定义自己的分配和销毁顺序。直接修改 `type` 或 `list`
+ * 会破坏注册表或生命周期状态，必须使用对象/类别 API。
  */
 struct rt_object
 {
 #if RT_NAME_MAX > 0
-    char        name[RT_NAME_MAX];                       /**< NUL-terminated name stored inline; long input is truncated. */
+    char        name[RT_NAME_MAX];                       /**< 行内存储的 NUL 结尾名称；过长输入会被截断。 */
 #else
-    const char *name;                                    /**< Borrowed name pointer; storage must outlive the object. */
+    const char *name;                                    /**< 借用的名称指针；其存储期必须长于对象。 */
 #endif /* RT_NAME_MAX > 0 */
-    rt_uint8_t  type;                                    /**< Class value plus the static-object ownership bit. */
-    rt_uint8_t  flag;                                    /**< Class-specific flags; the module bit is globally reserved. */
+    rt_uint8_t  type;                                    /**< 类别值加上静态对象所有权位。 */
+    rt_uint8_t  flag;                                    /**< 类别专用标志；模块位为全局保留位。 */
 
 #ifdef RT_USING_MODULE
-    void      * module_id;                               /**< Owning loadable module, used to reclaim module resources. */
+    void      * module_id;                               /**< 所属可加载模块，用于回收模块资源。 */
 #endif /* RT_USING_MODULE */
 
 #ifdef RT_USING_SMART
-    rt_atomic_t lwp_ref_count;                           /**< Atomic references held on behalf of RT-Smart LWPs. */
+    rt_atomic_t lwp_ref_count;                           /**< 代表 RT-Smart LWP 持有的原子引用数。 */
 #endif /* RT_USING_SMART */
 
-    rt_list_t   list;                                    /**< Node in a class-global or module-private object list. */
+    rt_list_t   list;                                    /**< 类别全局或模块私有对象链表中的节点。 */
 };
-typedef struct rt_object *rt_object_t;                   /**< Type for kernel objects. */
+typedef struct rt_object *rt_object_t;                   /**< 内核对象类型。 */
 
 /**
- * @brief Visitor callback used by rt_object_for_each().
+ * @brief rt_object_for_each() 使用的访问回调函数。
  *
- * @param object Current object in the selected class container.
- * @param data Opaque caller context passed through by rt_object_for_each().
- * @return RT_EOK to continue; a positive value to stop successfully; or a
- *         negative RT-Thread error to stop and report failure.
+ * @param object 所选类别容器中的当前对象。
+ * @param data 由 rt_object_for_each() 直接传递的不透明调用方上下文。
+ * @return 返回 RT_EOK 继续；返回正值表示成功停止；返回负 RT-Thread 错误表示停止并报告失败。
  *
- * rt_object_for_each() invokes the callback while holding the selected class
- * registry spinlock.  The callback must stay bounded, must not block, and must
- * not call an object API that takes the same registry lock or changes the
- * current object's registry membership.
+ * rt_object_for_each() 持有所选类别注册表自旋锁时调用该回调。回调必须在有限时间内
+ * 完成，不得阻塞，也不得调用会获取同一注册表锁或改变当前对象注册表成员关系的对象 API。
  */
 typedef rt_err_t (*rt_object_iter_t)(rt_object_t object, void *data);
 
 /**
- * @brief Runtime class tag stored in rt_object::type.
+ * @brief 存储在 rt_object::type 中的运行时类别标记。
  *
- * The low seven bits select the logical object class.  The value
- * RT_Object_Class_Static is an ownership attribute ORed into the class value,
- * not an independent object class; callers should mask or use the object APIs
- * when testing a class.  Some enumerators are meaningful only when their
- * corresponding feature is compiled in.
+ * 低七位选择逻辑对象类别。值 RT_Object_Class_Static 是与类别值按位或的所有权属性，
+ * 而非独立对象类别；测试类别时调用者应进行掩码处理或使用对象 API。部分枚举值仅在
+ * 编译了对应功能时才有意义。
  *
- * The object type can be one of the following with specific macros enabled:
- *  - Thread
- *  - Semaphore
- *  - Mutex
- *  - Event
- *  - MailBox
- *  - MessageQueue
- *  - MemHeap
- *  - MemPool
- *  - Device
- *  - Timer
- *  - Module, Memory, Channel, ProcessGroup, Session, or Custom
- *  - Unknown
- *  - Static ownership attribute (not an independent logical class)
+ * 启用相应宏时，对象类型可以是以下之一：
+ *  - 线程、信号量、互斥量、事件、邮箱、消息队列、内存堆、内存池、设备或定时器
+ *  - 模块、内存、通道、进程组、会话或自定义对象
+ *  - 未知对象
+ *  - 静态所有权属性（不是独立逻辑类别）
  */
 enum rt_object_class_type
 {
-    RT_Object_Class_Null          = 0x00,      /**< The object is not used. */
-    RT_Object_Class_Thread        = 0x01,      /**< The object is a thread. */
-    RT_Object_Class_Semaphore     = 0x02,      /**< The object is a semaphore. */
-    RT_Object_Class_Mutex         = 0x03,      /**< The object is a mutex. */
-    RT_Object_Class_Event         = 0x04,      /**< The object is a event. */
-    RT_Object_Class_MailBox       = 0x05,      /**< The object is a mail box. */
-    RT_Object_Class_MessageQueue  = 0x06,      /**< The object is a message queue. */
-    RT_Object_Class_MemHeap       = 0x07,      /**< The object is a memory heap. */
-    RT_Object_Class_MemPool       = 0x08,      /**< The object is a memory pool. */
-    RT_Object_Class_Device        = 0x09,      /**< The object is a device. */
-    RT_Object_Class_Timer         = 0x0a,      /**< The object is a timer. */
-    RT_Object_Class_Module        = 0x0b,      /**< The object is a module. */
-    RT_Object_Class_Memory        = 0x0c,      /**< The object is a memory. */
-    RT_Object_Class_Channel       = 0x0d,      /**< The object is a channel */
-    RT_Object_Class_ProcessGroup  = 0x0e,      /**< The object is a process group */
-    RT_Object_Class_Session       = 0x0f,      /**< The object is a session */
-    RT_Object_Class_Custom        = 0x10,      /**< The object is a custom object */
-    RT_Object_Class_Unknown       = 0x11,      /**< The object is unknown. */
-    RT_Object_Class_Static        = 0x80       /**< The object is a static object. */
+    RT_Object_Class_Null          = 0x00,      /**< 对象未被使用。 */
+    RT_Object_Class_Thread        = 0x01,      /**< 对象是线程。 */
+    RT_Object_Class_Semaphore     = 0x02,      /**< 对象是信号量。 */
+    RT_Object_Class_Mutex         = 0x03,      /**< 对象是互斥量。 */
+    RT_Object_Class_Event         = 0x04,      /**< 对象是事件。 */
+    RT_Object_Class_MailBox       = 0x05,      /**< 对象是邮箱。 */
+    RT_Object_Class_MessageQueue  = 0x06,      /**< 对象是消息队列。 */
+    RT_Object_Class_MemHeap       = 0x07,      /**< 对象是内存堆。 */
+    RT_Object_Class_MemPool       = 0x08,      /**< 对象是内存池。 */
+    RT_Object_Class_Device        = 0x09,      /**< 对象是设备。 */
+    RT_Object_Class_Timer         = 0x0a,      /**< 对象是定时器。 */
+    RT_Object_Class_Module        = 0x0b,      /**< 对象是模块。 */
+    RT_Object_Class_Memory        = 0x0c,      /**< 对象是内存。 */
+    RT_Object_Class_Channel       = 0x0d,      /**< 对象是通道。 */
+    RT_Object_Class_ProcessGroup  = 0x0e,      /**< 对象是进程组。 */
+    RT_Object_Class_Session       = 0x0f,      /**< 对象是会话。 */
+    RT_Object_Class_Custom        = 0x10,      /**< 对象是自定义对象。 */
+    RT_Object_Class_Unknown       = 0x11,      /**< 对象类别未知。 */
+    RT_Object_Class_Static        = 0x80       /**< 对象是静态对象。 */
 };
 
 /**
- * @brief Per-class registry used internally by the generic object manager.
+ * @brief 通用对象管理器内部使用的每类别注册表。
  *
- * There is one descriptor for each enabled class.  object_list is the sentinel
- * of globally registered instances (objects owned by a loadable module may be
- * kept on its private list instead), object_size is the allocation size for
- * dynamic objects, and spinlock serializes global-registry mutation/traversal.
+ * 每个已启用类别各有一个描述符。object_list 是全局已注册实例的哨兵节点（可加载
+ * 模块拥有的对象可能保存在其私有链表中）；object_size 是动态对象的分配大小；
+ * spinlock 使全局注册表的修改和遍历串行化。
  */
 struct rt_object_information
 {
-    enum rt_object_class_type type;                     /**< Class represented by this registry. */
-    rt_list_t                 object_list;              /**< Sentinel of globally registered objects of this class. */
-    rt_size_t                 object_size;              /**< Bytes allocated by rt_object_allocate(). */
-    struct rt_spinlock        spinlock;                 /**< Protects object_list and registry operations. */
+    enum rt_object_class_type type;                     /**< 此注册表表示的类别。 */
+    rt_list_t                 object_list;              /**< 此类别全局注册对象的哨兵节点。 */
+    rt_size_t                 object_size;              /**< rt_object_allocate() 分配的字节数。 */
+    struct rt_spinlock        spinlock;                 /**< 保护 object_list 和注册表操作。 */
 };
 
 /**
- * @brief Invoke a single function-pointer hook when hook support is enabled.
+ * @brief 启用钩子支持时调用单个函数指针钩子。
  *
- * @param func Hook variable, not a function name that is guaranteed to exist.
- * @param argv Parenthesized argument tuple, for example `(thread)`.
+ * @param func 钩子变量，不是保证存在的函数名。
+ * @param argv 括号包围的参数元组，例如 `(thread)`。
  *
- * The double macro layer allows @p func to be expanded before dispatch.
+ * 双层宏使 @p func 能在分派前展开。
  * RT_HOOK_USING_FUNC_PTR selects the legacy single-listener implementation;
  * otherwise the call is compiled out and a hook-list point may be used.  Hook
- * code executes synchronously in the caller's context, which may be an ISR or
- * a scheduler-locked region, and must obey that call site's restrictions.
+ * 钩子代码在调用方上下文中同步执行，该上下文可能是 ISR 或调度器锁定区域，必须遵守
+ * 该调用点的限制。
  */
 #ifndef RT_USING_HOOK
 #define RT_OBJECT_HOOK_CALL(func, argv)
@@ -487,8 +453,8 @@ struct rt_object_information
 #else
 
 /**
- * @brief Add hook point in the routines
- * @note Usage:
+ * @brief 在例程中添加钩子点。
+ * @note 用法：
  * void foo(void *arg) {
  *     do_something();
  *
@@ -510,7 +476,7 @@ struct rt_object_information
 #ifdef RT_USING_HOOKLIST
 
 /**
- * @brief Declare the types and registration API for a multi-listener hook.
+ * @brief 为多监听器钩子声明类型和注册 API。
  *
  * The generated node contains the typed handler and an intrusive list node.
  * Callers own the node storage and must keep it alive while registered.  The
@@ -519,8 +485,8 @@ struct rt_object_information
  * `list_node` links this caller-owned record into the hook point's listener
  * list; applications must treat both as registered-state metadata.
  *
- * @note Usage:
- * This is typically used in your header. In foo.h using this like:
+ * @note 用法：
+ * 此宏通常在头文件中使用。在 foo.h 中可按如下方式使用：
  *
  * ```foo.h
  *     typedef void (*bar_hook_proto_t)(arguments...);
@@ -538,10 +504,10 @@ struct rt_object_information
     void name##_rmhook(name##_hooklistnode_t node)
 
 /**
- * @brief Define and statically initialize one caller-owned hook-list node.
+ * @brief 定义并静态初始化一个由调用方拥有的钩子列表节点。
  *
- * @note Usage
- * You can add a hook like this.
+ * @note 用法
+ * 可以按如下方式添加钩子。
  *
  * ```addhook.c
  * void myhook(arguments...) { do_something(); }
@@ -553,7 +519,7 @@ struct rt_object_information
  * }
  * ```
  *
- * BTW, you can also find examples codes under
+ * 此外，也可在以下路径找到示例代码：
  * `examples/utest/testcases/kernel/hooklist_tc.c`.
  */
 #define RT_OBJECT_HOOKLIST_DEFINE_NODE(hookname, nodename, hooker_handler) \
@@ -563,7 +529,7 @@ struct rt_object_information
     };
 
 /**
- * @brief Define a hook list, its lock, and its registration functions.
+ * @brief 定义钩子列表、其锁及其注册函数。
  *
  * Add this macro exactly once, in the source file that owns the hook point.
  * Registration and removal use irqsave locking.  They wait until all active
@@ -601,7 +567,7 @@ struct rt_object_information
     }
 
 /**
- * @brief Invoke every registered listener in list order.
+ * @brief 按链表顺序调用每个已注册监听器。
  *
  * The nested counter protects list topology, but handlers are deliberately
  * called without holding the list spinlock.  This avoids executing arbitrary
@@ -609,7 +575,7 @@ struct rt_object_information
  * original call site's context and must provide their own protection for data
  * they share with other threads or CPUs.
  *
- * @note Usage:
+ * @note 用法：
  * void foo() {
  *     do_something();
  *
@@ -657,81 +623,76 @@ struct rt_object_information
 /**@{*/
 
 /**
- * Timer flag layout stored in rt_timer::parent.flag.
+ * 存储在 rt_timer::parent.flag 中的定时器标志布局。
  *
- * The active bit is maintained by the timer subsystem.  Periodicity and
- * execution-context bits describe timer policy.  Normally a hard timer callback
- * runs from the tick/interrupt-side timer check and therefore must not block,
- * while a soft timer runs in the timer service thread.  Under
- * RT_USING_TIMER_ALL_SOFT all timers, including those carrying the zero-valued
- * HARD flag, are placed on the soft list and dispatched by that worker thread.
- * RT_TIMER_FLAG_THREAD_TIMER identifies the per-thread timeout timer whose
- * state is coordinated directly with the scheduler.
+ * 活动位由定时器子系统维护。周期性和
+ * 执行上下文位描述定时器策略。通常硬定时器回调在 tick/中断侧的定时器检查中运行，
+ * 因此不得阻塞；软定时器在定时器服务线程中运行。启用 RT_USING_TIMER_ALL_SOFT 时，
+ * 所有定时器（包括携带值为零的 HARD 标志者）都放入软定时器链表，并由该工作线程
+ * 分派。RT_TIMER_FLAG_THREAD_TIMER 标识状态直接与调度器协调的每线程超时定时器。
  */
-#define RT_TIMER_FLAG_DEACTIVATED       0x0             /**< timer is deactive */
-#define RT_TIMER_FLAG_ACTIVATED         0x1             /**< timer is active */
-#define RT_TIMER_FLAG_ONE_SHOT          0x0             /**< one shot timer */
-#define RT_TIMER_FLAG_PERIODIC          0x2             /**< periodic timer */
+#define RT_TIMER_FLAG_DEACTIVATED       0x0             /**< 定时器未激活 */
+#define RT_TIMER_FLAG_ACTIVATED         0x1             /**< 定时器已激活 */
+#define RT_TIMER_FLAG_ONE_SHOT          0x0             /**< 单次定时器 */
+#define RT_TIMER_FLAG_PERIODIC          0x2             /**< 周期定时器 */
 
-#define RT_TIMER_FLAG_HARD_TIMER        0x0             /**< hard timer,the timer's callback function will be called in tick isr. */
-#define RT_TIMER_FLAG_SOFT_TIMER        0x4             /**< soft timer,the timer's callback function will be called in timer thread. */
+#define RT_TIMER_FLAG_HARD_TIMER        0x0             /**< 硬定时器；其回调函数在 tick ISR 中调用。 */
+#define RT_TIMER_FLAG_SOFT_TIMER        0x4             /**< 软定时器；其回调函数在定时器线程中调用。 */
 #define RT_TIMER_FLAG_THREAD_TIMER \
-    (0x8 | RT_TIMER_FLAG_HARD_TIMER)                    /**< thread timer that cooperates with scheduler directly */
+    (0x8 | RT_TIMER_FLAG_HARD_TIMER)                    /**< 直接与调度器协作的线程定时器 */
 
-#define RT_TIMER_CTRL_SET_TIME          0x0             /**< set timer control command */
-#define RT_TIMER_CTRL_GET_TIME          0x1             /**< get timer control command */
-#define RT_TIMER_CTRL_SET_ONESHOT       0x2             /**< change timer to one shot */
-#define RT_TIMER_CTRL_SET_PERIODIC      0x3             /**< change timer to periodic */
-#define RT_TIMER_CTRL_GET_STATE         0x4             /**< get timer run state active or deactive*/
-#define RT_TIMER_CTRL_GET_REMAIN_TIME   0x5             /**< get the remaining hang time */
-#define RT_TIMER_CTRL_GET_FUNC          0x6             /**< get timer timeout func  */
-#define RT_TIMER_CTRL_SET_FUNC          0x7             /**< set timer timeout func  */
-#define RT_TIMER_CTRL_GET_PARM          0x8             /**< get timer parameter  */
-#define RT_TIMER_CTRL_SET_PARM          0x9             /**< set timer parameter  */
+#define RT_TIMER_CTRL_SET_TIME          0x0             /**< 设置定时器控制命令 */
+#define RT_TIMER_CTRL_GET_TIME          0x1             /**< 获取定时器控制命令 */
+#define RT_TIMER_CTRL_SET_ONESHOT       0x2             /**< 将定时器改为单次模式 */
+#define RT_TIMER_CTRL_SET_PERIODIC      0x3             /**< 将定时器改为周期模式 */
+#define RT_TIMER_CTRL_GET_STATE         0x4             /**< 获取定时器激活或未激活状态 */
+#define RT_TIMER_CTRL_GET_REMAIN_TIME   0x5             /**< 获取剩余等待时间 */
+#define RT_TIMER_CTRL_GET_FUNC          0x6             /**< 获取定时器超时函数 */
+#define RT_TIMER_CTRL_SET_FUNC          0x7             /**< 设置定时器超时函数 */
+#define RT_TIMER_CTRL_GET_PARM          0x8             /**< 获取定时器参数 */
+#define RT_TIMER_CTRL_SET_PARM          0x9             /**< 设置定时器参数 */
 
 #ifndef RT_TIMER_SKIP_LIST_LEVEL
-/** Number of ordered-list levels embedded in each timer object. */
+/** 每个定时器对象内嵌的有序链表层数。 */
 #define RT_TIMER_SKIP_LIST_LEVEL          1
 #endif
 
-/* Mask controlling promotion among timer skip-list levels; normally 1 or 3. */
+/* 控制定时器跳表层级提升的掩码；通常为 1 或 3。 */
 #ifndef RT_TIMER_SKIP_LIST_MASK
-#define RT_TIMER_SKIP_LIST_MASK         0x3             /**< Timer skips the list mask */
+#define RT_TIMER_SKIP_LIST_MASK         0x3             /**< 定时器跳表掩码 */
 #endif
 
 /**
- * @brief Timer expiration callback.
+ * @brief 定时器到期回调函数。
  *
- * @param parameter Opaque value supplied when the timer is initialized.
+ * @param parameter 初始化定时器时提供的不透明值。
  *
- * Normally the HARD/SOFT flag selects interrupt or timer-worker context;
+ * 通常 HARD/SOFT 标志选择中断或定时器工作线程上下文；
  * RT_USING_TIMER_ALL_SOFT overrides that choice and dispatches every callback
- * in the worker thread.  While a timer callback is being dispatched it must not
- * detach, delete, free, or otherwise invalidate that timer: the dispatcher
- * invokes the exit hook and inspects timer state after the callback returns.
- * Stopping or reconfiguring a still-live timer is permitted by its API.
+ * 在工作线程中分派所有回调。分派定时器回调期间不得分离、删除、释放或以其他方式使该
+ * 定时器失效：分派器会在回调返回后调用退出钩子并检查定时器状态。其 API 允许停止或
+ * 重新配置仍然有效的定时器。
  */
 typedef void (*rt_timer_func_t)(void *parameter);
 
 /**
- * @brief Kernel timer control block.
+ * @brief 内核定时器控制块。
  *
- * Timers are ordered by absolute timeout_tick in one or more intrusive lists.
- * init_tick stores the relative interval requested by the caller; timeout_tick
- * is recomputed whenever the timer is started.  For periodic timers the same
- * interval is used when scheduling the next expiration.
+ * 定时器按绝对 timeout_tick 排列在一个或多个侵入式链表中。init_tick 保存调用方
+ * 请求的相对间隔；每次启动定时器都会重新计算 timeout_tick。周期定时器在安排下次
+ * 到期时使用相同间隔。
  */
 struct rt_timer
 {
-    struct rt_object parent;                            /**< inherit from rt_object */
+    struct rt_object parent;                            /**< 继承自 rt_object */
 
-    rt_list_t        row[RT_TIMER_SKIP_LIST_LEVEL];    /**< Nodes for each level of the ordered timer skip list. */
+    rt_list_t        row[RT_TIMER_SKIP_LIST_LEVEL];    /**< 有序定时器跳表各层的节点。 */
 
-    rt_timer_func_t  timeout_func;                      /**< timeout function */
-    void             *parameter;                        /**< timeout function's parameter */
+    rt_timer_func_t  timeout_func;                      /**< 超时函数 */
+    void             *parameter;                        /**< 超时函数的参数 */
 
-    rt_tick_t        init_tick;                         /**< Relative delay/period in system ticks. */
-    rt_tick_t        timeout_tick;                      /**< Absolute tick at which the current activation expires. */
+    rt_tick_t        init_tick;                         /**< 以系统 tick 为单位的相对延迟或周期。 */
+    rt_tick_t        timeout_tick;                      /**< 当前激活将在该绝对 tick 到期。 */
 };
 typedef struct rt_timer *rt_timer_t;
 
@@ -743,13 +704,13 @@ typedef struct rt_timer *rt_timer_t;
 /**@{*/
 
 #ifdef RT_USING_SIGNALS
-/** Maximum number of classic kernel-thread signals represented by rt_sigset_t. */
+/** rt_sigset_t 可表示的传统内核线程信号最大数量。 */
 #define RT_SIG_MAX          32
-/** Bit set of pending or masked classic signals. */
+/** 待处理或被屏蔽的传统信号位集合。 */
 typedef unsigned long rt_sigset_t;
-/** Signal information type reused from the configured C/POSIX environment. */
+/** 复用已配置 C/POSIX 环境中的信号信息类型。 */
 typedef siginfo_t rt_siginfo_t;
-/** Classic one-argument signal handler executed for @p signo. */
+/** 为 @p signo 执行的传统单参数信号处理函数。 */
 typedef void (*rt_sighandler_t)(int signo);
 #endif /* RT_USING_SIGNALS */
 /**@}*/
@@ -760,94 +721,90 @@ typedef void (*rt_sighandler_t)(int signo);
  */
 
 /*
- * Thread
+ * 线程。
  */
 
 /*
- * Thread state encoding stored in the scheduler context's stat byte.
- * The low three bits hold the lifecycle/suspend state; upper bits carry
- * orthogonal yield and signal state.  Compare the low state through
- * RT_THREAD_STAT_MASK rather than comparing the complete byte directly.
+ * 存储在调度器上下文 stat 字节中的线程状态编码。
+ * 低三位保存生命周期/挂起状态；高位保存相互独立的让出和信号状态。应通过
+ * RT_THREAD_STAT_MASK 比较低位状态，而非直接比较完整字节。
  */
-#define RT_THREAD_INIT                       0x00                /**< Initialized status */
-#define RT_THREAD_CLOSE                      0x01                /**< Closed status */
-#define RT_THREAD_READY                      0x02                /**< Ready status */
-#define RT_THREAD_RUNNING                    0x03                /**< Running status */
+#define RT_THREAD_INIT                       0x00                /**< 初始化状态 */
+#define RT_THREAD_CLOSE                      0x01                /**< 关闭状态 */
+#define RT_THREAD_READY                      0x02                /**< 就绪状态 */
+#define RT_THREAD_RUNNING                    0x03                /**< 运行状态 */
 
 /*
- * User-facing suspend policy accepted by rt_thread_suspend_with_flag().
- * It controls which signal classes may wake an RT-Smart thread while it is
- * blocked; the values are converted to the encoded states below.
+ * rt_thread_suspend_with_flag() 接受的面向用户的挂起策略。
+ * 它控制 RT-Smart 线程阻塞期间哪些信号类别可以唤醒它；这些值会转换为下方的编码状态。
  */
 enum
 {
-    RT_INTERRUPTIBLE = 0, /**< Ordinary signals may interrupt the wait. */
-    RT_KILLABLE,          /**< Only kill-class signals may interrupt the wait. */
-    RT_UNINTERRUPTIBLE,   /**< Signals do not interrupt the wait. */
+    RT_INTERRUPTIBLE = 0, /**< 普通信号可以中断等待。 */
+    RT_KILLABLE,          /**< 仅终止类信号可以中断等待。 */
+    RT_UNINTERRUPTIBLE,   /**< 信号不能中断等待。 */
 };
 
 #define RT_THREAD_SUSPEND_MASK               0x04
 #define RT_SIGNAL_COMMON_WAKEUP_MASK         0x02
 #define RT_SIGNAL_KILL_WAKEUP_MASK           0x01
 
-#define RT_THREAD_SUSPEND_INTERRUPTIBLE      (RT_THREAD_SUSPEND_MASK)                                                             /**< Suspend interruptable 0x4 */
+#define RT_THREAD_SUSPEND_INTERRUPTIBLE      (RT_THREAD_SUSPEND_MASK)                                                             /**< 挂起可中断0x4 */
 #define RT_THREAD_SUSPEND                    RT_THREAD_SUSPEND_INTERRUPTIBLE
-#define RT_THREAD_SUSPEND_KILLABLE           (RT_THREAD_SUSPEND_MASK | RT_SIGNAL_COMMON_WAKEUP_MASK)                              /**< Suspend with killable 0x6 */
-#define RT_THREAD_SUSPEND_UNINTERRUPTIBLE    (RT_THREAD_SUSPEND_MASK | RT_SIGNAL_COMMON_WAKEUP_MASK | RT_SIGNAL_KILL_WAKEUP_MASK) /**< Suspend with uninterruptable 0x7 */
+#define RT_THREAD_SUSPEND_KILLABLE           (RT_THREAD_SUSPEND_MASK | RT_SIGNAL_COMMON_WAKEUP_MASK)                              /**< 挂起并可杀死 0x6 */
+#define RT_THREAD_SUSPEND_UNINTERRUPTIBLE    (RT_THREAD_SUSPEND_MASK | RT_SIGNAL_COMMON_WAKEUP_MASK | RT_SIGNAL_KILL_WAKEUP_MASK) /**< 以不间断的 0x7 挂起 */
 #define RT_THREAD_STAT_MASK                  0x07
 
-#define RT_THREAD_STAT_YIELD            0x08                /**< indicate whether remaining_tick has been reloaded since last schedule */
+#define RT_THREAD_STAT_YIELD            0x08                /**< 表示 remaining_tick 自上次调度以来是否已重新加载 */
 #define RT_THREAD_STAT_YIELD_MASK       RT_THREAD_STAT_YIELD
 
-#define RT_THREAD_STAT_SIGNAL           0x10                /**< task hold signals */
+#define RT_THREAD_STAT_SIGNAL           0x10                /**< 任务保持信号 */
 #define RT_THREAD_STAT_SIGNAL_READY     (RT_THREAD_STAT_SIGNAL | RT_THREAD_READY)
-#define RT_THREAD_STAT_SIGNAL_WAIT      0x20                /**< task is waiting for signals */
-#define RT_THREAD_STAT_SIGNAL_PENDING   0x40                /**< signals is held and it has not been procressed */
+#define RT_THREAD_STAT_SIGNAL_WAIT      0x20                /**< 任务正在等待信号 */
+#define RT_THREAD_STAT_SIGNAL_PENDING   0x40                /**< 信号已被持有且尚未被处理 */
 #define RT_THREAD_STAT_SIGNAL_MASK      0xf0
 
 /**
- * thread control command definitions
+ * 线程控制命令定义
  */
-#define RT_THREAD_CTRL_STARTUP          0x00                /**< Startup thread. */
-#define RT_THREAD_CTRL_CLOSE            0x01                /**< Close thread. */
-#define RT_THREAD_CTRL_CHANGE_PRIORITY  0x02                /**< Change thread priority. */
-#define RT_THREAD_CTRL_INFO             0x03                /**< Get thread information. */
-#define RT_THREAD_CTRL_BIND_CPU         0x04                /**< Set thread bind cpu. */
-#define RT_THREAD_CTRL_RESET_PRIORITY   0x05                /**< Reset thread priority. */
+#define RT_THREAD_CTRL_STARTUP          0x00                /**< 启动线程。 */
+#define RT_THREAD_CTRL_CLOSE            0x01                /**< 关闭线程。 */
+#define RT_THREAD_CTRL_CHANGE_PRIORITY  0x02                /**< 更改线程优先级。 */
+#define RT_THREAD_CTRL_INFO             0x03                /**< 获取线程信息。 */
+#define RT_THREAD_CTRL_BIND_CPU         0x04                /**< 设置线程绑定cpu。 */
+#define RT_THREAD_CTRL_RESET_PRIORITY   0x05                /**< 重置线程优先级。 */
 
 /**
- * @brief Accumulated CPU execution-time categories.
+ * @brief 累计 CPU 执行时间类别。
  *
- * Values are architecture-defined accounting units, normally scheduler ticks.
- * They are cumulative counters rather than percentages; per-thread recent
- * percentages are derived from snapshots when CPU usage tracing is enabled.
+ * 值是架构定义的会计单位，通常是调度程序刻度。它们是累积计数器而不是百分比；当启用 CPU 使用情况跟踪时，每个线程的最近百分比源自快照。
  */
 struct rt_cpu_usage_stats
 {
-    rt_ubase_t user;       /**< Time spent executing unprivileged/user code. */
-    rt_ubase_t system;     /**< Time spent executing privileged kernel code. */
-    rt_ubase_t irq;        /**< Reserved IRQ/exception slot; common tick accounting currently leaves it unchanged. */
-    rt_ubase_t idle;       /**< Time spent in the per-CPU idle thread. */
+    rt_ubase_t user;       /**< 执行非特权/用户代码所花费的时间。 */
+    rt_ubase_t system;     /**< 执行特权内核代码所花费的时间。 */
+    rt_ubase_t irq;        /**< 保留IRQ/异常槽；通用刻度会计目前保持不变。 */
+    rt_ubase_t idle;       /**< 每个 CPU 空闲线程花费的时间。 */
 };
 typedef struct rt_cpu_usage_stats *rt_cpu_usage_stats_t;
 
 #ifdef RT_USING_SMP
 
-#define RT_CPU_DETACHED                 RT_CPUS_NR          /**< The thread not running on cpu. */
-#define RT_CPU_MASK                     ((1 << RT_CPUS_NR) - 1) /**< All CPUs mask bit. */
+#define RT_CPU_DETACHED                 RT_CPUS_NR          /**< 线程未在 cpu 上运行。 */
+#define RT_CPU_MASK                     ((1 << RT_CPUS_NR) - 1) /**< 所有 CPU 掩码位。 */
 
 #ifndef RT_SCHEDULE_IPI
-/** Inter-processor interrupt used to request rescheduling on another CPU. */
+/** 用于请求在另一个 CPU 上重新调度的处理器间中断。 */
 #define RT_SCHEDULE_IPI                 0
 #endif /* RT_SCHEDULE_IPI */
 
 #ifndef RT_STOP_IPI
-/** Inter-processor interrupt used by the architecture's CPU-stop protocol. */
+/** 架构的 CPU-stop 协议使用的处理器间中断。 */
 #define RT_STOP_IPI                     1
 #endif /* RT_STOP_IPI */
 
 #ifndef RT_SMP_CALL_IPI
-/** Inter-processor interrupt used to execute a function on remote CPUs. */
+/** 用于在远程 CPU 上执行函数的处理器间中断。 */
 #define RT_SMP_CALL_IPI                 2
 #endif
 
@@ -856,107 +813,101 @@ typedef struct rt_cpu_usage_stats *rt_cpu_usage_stats_t;
 #define _SCHEDULER_CONTEXT(fileds) fileds
 
 /**
- * @brief Per-CPU scheduler and interrupt bookkeeping for an SMP build.
+ * @brief 用于 SMP 构建的 Per-CPU 调度程序和中断簿记。
  *
- * Scheduler fields are private to their owning CPU.  The local core accesses
- * them while in an RT-Thread critical section; unsynchronized remote access is
- * undefined.  Threads without a CPU binding can also reside in the scheduler's
- * global ready queue, which is maintained outside this structure.
+ * 调度程序字段对其所属的 CPU 而言是私有的。  本地核心在 RT-Thread 临界区中访问它们；未定义不同步的远程访问。  没有 CPU 绑定的线程也可以驻留在调度程序的全局就绪队列中，该队列在此结构之外进行维护。
  */
 struct rt_cpu
 {
     /**
-     * protected by:
-     *   - other cores: accessing from other coress is undefined behaviour
-     *   - local core: rt_enter_critical()/rt_exit_critical()
-     */
+ * 受以下保护：
+ * - 其他核心：从其他核心访问是未定义的行为
+ * - 本地核心：rt_enter_critical()/rt_exit_critical()
+ */
     _SCHEDULER_CONTEXT(
-        struct rt_thread        *current_thread;       /**< Thread currently executing on this CPU. */
+        struct rt_thread        *current_thread;       /**< 当前在此 CPU 上执行的线程。 */
 
-        rt_uint8_t              irq_switch_flag:1;     /**< Defer a requested switch until interrupt return. */
-        rt_uint8_t              sched_lock_flag:1;     /**< CPU currently owns scheduler serialization. */
+        rt_uint8_t              irq_switch_flag:1;     /**< 推迟请求的切换直到中断返回。 */
+        rt_uint8_t              sched_lock_flag:1;     /**< CPU 当前拥有调度程序序列化。 */
 #ifndef ARCH_USING_HW_THREAD_SELF
-        rt_uint8_t              critical_switch_flag:1; /**< A switch was postponed by a critical section. */
+        rt_uint8_t              critical_switch_flag:1; /**< 切换被关键部分推迟。 */
 #endif /* ARCH_USING_HW_THREAD_SELF */
 
-        rt_uint8_t              current_priority;      /**< Effective priority recorded for this CPU's running thread. */
-        rt_list_t               priority_table[RT_THREAD_PRIORITY_MAX]; /**< Per-priority ready-list sentinels. */
+        rt_uint8_t              current_priority;      /**< 为该 CPU 的运行线程记录的有效优先级。 */
+        rt_list_t               priority_table[RT_THREAD_PRIORITY_MAX]; /**< 按优先级的就绪列表哨兵。 */
     #if RT_THREAD_PRIORITY_MAX > 32
-        rt_uint32_t             priority_group;        /**< Top-level bitmap identifying nonempty ready groups. */
-        rt_uint8_t              ready_table[32];       /**< Second-level bitmap for priorities in each group. */
+        rt_uint32_t             priority_group;        /**< 标识非空就绪组的顶级位图。 */
+        rt_uint8_t              ready_table[32];       /**< 每组中优先级的二级位图。 */
     #else
-        rt_uint32_t             priority_group;        /**< One bit per nonempty per-CPU priority queue. */
+        rt_uint32_t             priority_group;        /**< 每个非空 CPU 优先级队列一位。 */
     #endif /* RT_THREAD_PRIORITY_MAX > 32 */
 
-        rt_atomic_t             tick;                   /**< Tick count observed on this CPU. */
+        rt_atomic_t             tick;                   /**< 在此 CPU 上观察到的蜱计数。 */
     );
 
-    struct rt_thread            *idle_thread;           /**< Lowest-priority idle thread bound to this CPU. */
-    rt_atomic_t                 irq_nest;               /**< Current interrupt nesting depth on this CPU. */
+    struct rt_thread            *idle_thread;           /**< 绑定到此 CPU 的最低优先级空闲线程。 */
+    rt_atomic_t                 irq_nest;               /**< CPU 上的当前中断嵌套深度。 */
 
 #ifdef RT_USING_SMART
-    struct rt_spinlock          spinlock;               /**< RT-Smart-specific protection for per-CPU state. */
+    struct rt_spinlock          spinlock;               /**< RT-Smart 针对每个 CPU 状态的特定保护。 */
 #endif /* RT_USING_SMART */
 #ifdef RT_USING_CPU_USAGE_TRACER
-    struct rt_cpu_usage_stats   cpu_stat;               /**< Cumulative CPU usage accounting. */
+    struct rt_cpu_usage_stats   cpu_stat;               /**< 累计 CPU 使用量统计。 */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 #ifdef ARCH_USING_IRQ_CTX_LIST
-    rt_slist_t                  irq_ctx_head;           /**< Stack/list of nested architecture IRQ contexts. */
+    rt_slist_t                  irq_ctx_head;           /**< 嵌套架构 IRQ 上下文的堆栈/列表。 */
 #endif /* ARCH_USING_IRQ_CTX_LIST */
 };
 
 #else /* !RT_USING_SMP */
 struct rt_cpu
 {
-    struct rt_thread            *current_thread;        /**< Currently executing thread in a UP build. */
-    struct rt_thread            *idle_thread;           /**< System idle thread. */
+    struct rt_thread            *current_thread;        /**< 当前在 UP 构建中执行线程。 */
+    struct rt_thread            *idle_thread;           /**< 系统空闲线程。 */
 
 #ifdef RT_USING_CPU_USAGE_TRACER
-    struct rt_cpu_usage_stats   cpu_stat;               /**< Cumulative CPU usage accounting. */
+    struct rt_cpu_usage_stats   cpu_stat;               /**< 累计 CPU 使用量统计。 */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 #ifdef ARCH_USING_IRQ_CTX_LIST
-    rt_slist_t                  irq_ctx_head;           /**< Nested architecture interrupt contexts. */
+    rt_slist_t                  irq_ctx_head;           /**< 嵌套架构中断上下文。 */
 #endif /* ARCH_USING_IRQ_CTX_LIST */
 };
 
 #endif /* RT_USING_SMP */
 
 typedef struct rt_cpu *rt_cpu_t;
-/* Read-only compatibility spelling: applications obtain, but cannot assign, the current thread. */
+/* 只读兼容拼写：应用程序获取但不能分配当前线程。 */
 #define rt_current_thread rt_thread_self()
 
 struct rt_thread;
 
 /**
- * @brief Architecture interrupt/exception context descriptor.
+ * @brief 架构中断/异常上下文描述符。
  *
- * Ports that enable ARCH_USING_IRQ_CTX_LIST push these descriptors so nested
- * exceptions can be inspected (for example by diagnostics or backtrace code).
+ * 启用 ARCH_USING_IRQ_CTX_LIST 的端口推送这些描述符，因此嵌套异常可以是 inspected（例如通过诊断或回溯代码）。
  */
 
 typedef struct rt_interrupt_context {
-    void *context;      /**< Pointer to an architecture-defined saved register frame. */
-    rt_slist_t node;    /**< Intrusive node in the current CPU's nested IRQ-context list. */
+    void *context;      /**< 指向体系结构定义的已保存寄存器帧的指针。 */
+    rt_slist_t node;    /**< 当前 CPU 的嵌套 IRQ 上下文列表中的侵入节点。 */
 } *rt_interrupt_context_t;
 
 #ifdef RT_USING_SMART
 /**
- * RT-Smart wait-object wakeup adapter.
+ * RT-Smart 等待对象唤醒适配器。
  *
- * A blocking subsystem installs a callback that knows how to detach @p thread
- * from its private wait object.  The callback returns an RT-Thread status and is
- * used when asynchronous process events need to wake a blocked user thread.
+ * 阻塞子系统安装一个回调，该回调知道如何将 @p thread 与其私有等待对象分离。  该回调返回 RT-Thread 状态，并在异步进程事件需要唤醒阻塞的用户线程时使用。
  */
 typedef rt_err_t (*rt_wakeup_func_t)(void *object, struct rt_thread *thread);
 
-/** Callback plus opaque wait-object data associated with one blocked thread. */
+/** 回调加上与一个阻塞线程关联的不透明等待对象数据。 */
 struct rt_wakeup
 {
-    rt_wakeup_func_t func; /**< Subsystem-specific operation that performs the wakeup. */
-    void *user_data;       /**< Wait object passed as the callback's first argument. */
+    rt_wakeup_func_t func; /**< 执行唤醒的子系统特定操作。 */
+    void *user_data;       /**< 等待对象作为回调的第一个参数传递。 */
 };
 
-/* RT-Smart supports 64 process-level signal numbers. */
+/* RT-Smart 支持 64 个进程级信号号。 */
 #define _LWP_NSIG       64
 
 #ifdef ARCH_CPU_64BIT
@@ -967,15 +918,15 @@ struct rt_wakeup
 
 #define _LWP_NSIG_WORDS (RT_ALIGN(_LWP_NSIG, _LWP_NSIG_BPW) / _LWP_NSIG_BPW)
 
-/** Traditional one-argument userspace signal handler. */
+/** 传统的单参数用户空间信号处理程序。 */
 typedef void (*lwp_sighandler_t)(int);
-/** SA_SIGINFO-style userspace handler receiving extended signal context. */
+/** SA_SIGINFO 风格的用户空间处理程序接收扩展信号上下文。 */
 typedef void (*lwp_sigaction_t)(int signo, siginfo_t *info, void *context);
 
-/** Fixed-size signal bitmap split into native-word chunks. */
+/** 固定大小的信号位图分割成本地字块。 */
 typedef struct
 {
-    unsigned long sig[_LWP_NSIG_WORDS]; /**< Bit N-1 represents signal number N. */
+    unsigned long sig[_LWP_NSIG_WORDS]; /**< Bit N-1代表信号编号N。 */
 } lwp_sigset_t;
 
 #if _LWP_NSIG <= 64
@@ -983,198 +934,191 @@ typedef struct
 #define lwp_sigset_init(mask)   ((lwp_sigset_t){.sig = {[0] = (long)(mask)}})
 #endif /* _LWP_NSIG <= 64 */
 
-/** Per-signal action installed by an RT-Smart process. */
+/** 由 RT-Smart 进程安装的每个信号操作。 */
 struct lwp_sigaction
 {
     union
     {
-        void (*_sa_handler)(int);                    /**< Traditional sa_handler callback. */
-        void (*_sa_sigaction)(int, siginfo_t *, void *); /**< Extended SA_SIGINFO callback. */
+        void (*_sa_handler)(int);                    /**< 传统的 sa_handler 回调。 */
+        void (*_sa_sigaction)(int, siginfo_t *, void *); /**< 扩展 SA_SIGINFO 回调。 */
     } __sa_handler;
-    lwp_sigset_t sa_mask;                            /**< Extra signals blocked during the callback. */
-    int sa_flags;                                    /**< POSIX-style SA_* behavior flags. */
-    void (*sa_restorer)(void);                       /**< Optional userspace signal-return trampoline. */
+    lwp_sigset_t sa_mask;                            /**< 回调期间阻止额外信号。 */
+    int sa_flags;                                    /**< POSIX 样式 SA_* 行为标志。 */
+    void (*sa_restorer)(void);                       /**< 可选的用户空间信号返回蹦床。 */
 };
 
-/** Optional signal-specific payload stored separately from common metadata. */
+/** 可选的特定于信号的有效负载与公共元数据分开存储。 */
 typedef struct lwp_siginfo_ext
 {
     union
     {
-        /* for SIGCHLD */
+        /* 对于 SIGCHLD */
         struct
         {
-            int status;                              /**< Child exit status or stop/continue code. */
-            clock_t utime;                           /**< User CPU time consumed by the child. */
-            clock_t stime;                           /**< System CPU time consumed by the child. */
+            int status;                              /**< 子进程退出状态或停止/继续代码。 */
+            clock_t utime;                           /**< 用户 CPU 孩子消耗的时间。 */
+            clock_t stime;                           /**< 系统 CPU 子进程消耗的时间。 */
         } sigchld;
     };
 } *lwp_siginfo_ext_t;
 
-/** One queued RT-Smart signal occurrence. */
+/** 一个排队的 RT-Smart 信号发生。 */
 typedef struct lwp_siginfo
 {
-    rt_list_t node;                                  /**< Node in lwp_sigqueue::siginfo_list. */
+    rt_list_t node;                                  /**< lwp_sigqueue::siginfo_list 中的节点。 */
 
     struct
     {
-        int signo;                                   /**< Signal number. */
-        int code;                                    /**< Origin/cause code analogous to si_code. */
+        int signo;                                   /**< 信号编号。 */
+        int code;                                    /**< 起源/原因代码类似于 si_code。 */
 
-        int from_tid;                                /**< Sending thread ID, when known. */
-        pid_t from_pid;                              /**< Sending process ID, when known. */
+        int from_tid;                                /**< 已知时发送线程 ID。 */
+        pid_t from_pid;                              /**< 已知时发送进程 ID。 */
     } ksiginfo;
 
-    struct lwp_siginfo_ext *ext;                     /**< Optional signal-specific extension payload. */
+    struct lwp_siginfo_ext *ext;                     /**< 可选的信号特定扩展有效负载。 */
 } *lwp_siginfo_t;
 
-/** Pending signal queue and a bitmap used for fast pending checks. */
+/** 挂起信号队列和用于快速挂起检查的位图。 */
 typedef struct lwp_sigqueue
 {
-    rt_list_t siginfo_list;                          /**< Ordered list of queued signal occurrences. */
-    lwp_sigset_t sigset_pending;                     /**< Union of signal numbers currently pending. */
+    rt_list_t siginfo_list;                          /**< 排队信号发生的有序列表。 */
+    lwp_sigset_t sigset_pending;                     /**< 当前待处理的信号号的联合。 */
 } *lwp_sigqueue_t;
 
-/** Signal state private to one RT-Smart thread. */
+/** 一个 RT-Smart 线程私有的信号状态。 */
 struct lwp_thread_signal {
-    lwp_sigset_t sigset_mask;                        /**< Signals blocked by this thread. */
-    struct lwp_sigqueue sig_queue;                   /**< Signals pending specifically for this thread. */
+    lwp_sigset_t sigset_mask;                        /**< 信号被该线程阻塞。 */
+    struct lwp_sigqueue sig_queue;                   /**< 专门为此线程挂起的信号。 */
 };
 
-/** Architecture-neutral pointers describing a suspended userspace context. */
+/** 描述挂起的用户空间上下文的架构中立指针。 */
 struct rt_user_context
 {
-    void *sp;                                        /**< Saved userspace stack pointer. */
-    void *pc;                                        /**< Saved userspace program counter. */
-    void *flag;                                      /**< Architecture status/flags value. */
+    void *sp;                                        /**< 保存的用户空间堆栈指针。 */
+    void *pc;                                        /**< 保存的用户空间程序计数器。 */
+    void *flag;                                      /**< 架构状态/标志值。 */
 
-    void *ctx;                                       /**< Kernel-side context marker; NULL denotes user mode. */
+    void *ctx;                                       /**< 内核端上下文标记； NULL 表示用户模式。 */
 };
 #endif /* RT_USING_SMART */
 
 /**
- * Thread cleanup callback invoked during deferred thread reclamation.
+ * 在延迟线程回收期间调用线程清理回调。
  *
- * It runs after the thread has stopped executing.  The callback may release
- * caller-owned resources but must not assume it runs on the exiting thread's
- * stack; depending on configuration it runs from idle or the system defunct
- * thread.
+ * 它在线程停止执行后运行。  回调可以释放调用者拥有的资源，但不能假设它在退出线程的堆栈上运行；根据配置，它从空闲或系统失效线程运行。
  */
 typedef void (*rt_thread_cleanup_t)(struct rt_thread *tid);
 
 /**
- * @brief Thread Control Block (TCB).
+ * @brief 线程控制 Block (TCB)。
  *
- * A thread is both a managed kernel object and a schedulable execution context.
- * The architecture port owns the layout below `sp`; the scheduler owns the
- * fields expanded by RT_SCHED_THREAD_CTX; IPC and timer code coordinate through
- * the embedded thread_timer.  Most fields are kernel-private and must be read
- * or changed through the public thread APIs.
+ * 线程既是一个托管内核对象，又是一个可调度的执行上下文。架构端口拥有`sp`以下的布局；调度器拥有RT_SCHED_THREAD_CTX扩展的字段； IPC和定时器代码通过嵌入的thread_timer协调。  大多数字段是内核私有的，必须通过公共线程 API 读取或更改。
  */
 struct rt_thread
 {
-    struct rt_object            parent;                 /**< Base object; must remain the first field. */
+    struct rt_object            parent;                 /**< 基础对象；必须保留在第一个字段。 */
 
-    /* Architecture context, initial entry, and owned stack extent. */
-    void                        *sp;                    /**< Saved kernel stack pointer used by context switching. */
-    void                        *entry;                 /**< Thread entry routine, stored generically for ABI portability. */
-    void                        *parameter;             /**< Opaque argument passed to the entry routine. */
-    void                        *stack_addr;            /**< Lowest/base address of the allocated stack region. */
-    rt_uint32_t                 stack_size;             /**< Stack region size in bytes. */
+    /* 架构上下文、初始条目和拥有的堆栈范围。 */
+    void                        *sp;                    /**< 上下文切换使用的保存的内核堆栈指针。 */
+    void                        *entry;                 /**< 线程入口例程，一般为了 ABI 可移植性而存储。 */
+    void                        *parameter;             /**< 传递给入口例程的不透明参数。 */
+    void                        *stack_addr;            /**< 分配的堆栈区域的最低/基地址。 */
+    rt_uint32_t                 stack_size;             /**< 堆栈区域大小（以字节为单位）。 */
 
-    rt_err_t                    error;                  /**< Last per-thread kernel error; also conveys wakeup/timeout status. */
+    rt_err_t                    error;                  /**< 最后一个每线程内核错误；还传达唤醒/超时状态。 */
 
 #ifdef RT_USING_SMP
-    rt_atomic_t                 cpus_lock_nest;         /**< Nesting count for the legacy all-CPU scheduler lock. */
+    rt_atomic_t                 cpus_lock_nest;         /**< 旧版全 CPU 调度程序锁的嵌套计数。 */
 #endif
 
-    /* Priority, ready/wait-list membership, state, time slice, and CPU affinity. */
+    /* 优先级、就绪/等待列表成员资格、状态、时间片和 CPU 关联性。 */
     RT_SCHED_THREAD_CTX
-    struct rt_timer             thread_timer;           /**< One-shot timeout timer reused by sleeps and blocking IPC. */
-    rt_thread_cleanup_t         cleanup;                /**< Optional callback executed during deferred reclamation. */
+    struct rt_timer             thread_timer;           /**< 睡眠和阻塞 IPC 重用的一次性超时计时器。 */
+    rt_thread_cleanup_t         cleanup;                /**< 延迟回收期间执行的可选回调。 */
 
 #ifdef RT_USING_MUTEX
-    /* Mutex ownership graph used by priority inheritance and exit cleanup. */
-    rt_list_t                   taken_object_list;      /**< Mutexes currently owned by this thread. */
-    rt_object_t                 pending_object;         /**< Mutex object this thread is currently waiting to acquire. */
+    /* 优先级继承和退出清理使用的互斥锁所有权图。 */
+    rt_list_t                   taken_object_list;      /**< 该线程当前拥有的互斥锁。 */
+    rt_object_t                 pending_object;         /**< 该线程当前正在等待获取的互斥对象。 */
 #endif /* RT_USING_MUTEX */
 
 #ifdef RT_USING_EVENT
-    /* Requested event condition retained while the thread is blocked. */
-    rt_uint32_t                 event_set;              /**< Event bits requested by rt_event_recv(). */
-    rt_uint8_t                  event_info;             /**< AND/OR/CLEAR matching options for the pending receive. */
+    /* 线程被阻塞时保留请求的事件条件。 */
+    rt_uint32_t                 event_set;              /**< rt_event_recv() 请求的事件位。 */
+    rt_uint8_t                  event_info;             /**< AND/OR/CLEAR 待处理接收的匹配选项。 */
 #endif /* RT_USING_EVENT */
 
 #ifdef RT_USING_SIGNALS
-    rt_sigset_t                 sig_pending;            /**< Bitmap of classic signals awaiting delivery. */
-    rt_sigset_t                 sig_mask;               /**< Bitmap of classic signals enabled/unmasked for delivery. */
+    rt_sigset_t                 sig_pending;            /**< 等待传递的经典信号位图。 */
+    rt_sigset_t                 sig_mask;               /**< 经典信号的位图已启用/未屏蔽以供传递。 */
 
 #ifndef RT_USING_SMP
-    void                        *sig_ret;               /**< Saved stack pointer used to return from a signal handler. */
+    void                        *sig_ret;               /**< 保存的堆栈指针用于从信号处理程序返回。 */
 #endif /* RT_USING_SMP */
-    rt_sighandler_t             *sig_vectors;           /**< Per-signal handler vector allocated for the thread. */
-    void                        *si_list;               /**< Private queued signal-information list. */
+    rt_sighandler_t             *sig_vectors;           /**< 为线程分配的每个信号处理程序向量。 */
+    void                        *si_list;               /**< 私有排队信号信息列表。 */
 #endif /* RT_USING_SIGNALS */
 
 #ifdef RT_USING_PTHREADS
-    void                        *pthread_data;          /**< POSIX-thread adaptation data, pointer-sized on all ABIs. */
+    void                        *pthread_data;          /**< POSIX-线程适配数据，所有 ABI 上的指针大小。 */
 #endif /* RT_USING_PTHREADS */
 
-    /* light weight process if present */
+    /* 轻量级进程（如果存在） */
 #ifdef RT_USING_SMART
-    void                        *msg_ret;               /**< Saved return value/message used by RT-Smart IPC paths. */
+    void                        *msg_ret;               /**< RT-Smart IPC 路径使用的保存的返回值/消息。 */
 
-    void                        *lwp;                   /**< Owning lightweight-process object. */
-    /* Userspace entry and dual-stack information. */
-    void                        *user_entry;            /**< Initial userspace program counter. */
-    void                        *user_stack;            /**< Base/address of the userspace stack mapping. */
-    rt_uint32_t                 user_stack_size;        /**< Userspace stack extent in bytes. */
-    rt_uint32_t                 *kernel_sp;             /**< Kernel stack pointer saved across user transitions. */
-    rt_list_t                   sibling;                /**< Node in the owning process's thread list. */
+    void                        *lwp;                   /**< 拥有轻量级进程对象。 */
+    /* 用户空间入口和双栈信息。 */
+    void                        *user_entry;            /**< 初始用户空间程序计数器。 */
+    void                        *user_stack;            /**< 用户空间堆栈映射的基址/地址。 */
+    rt_uint32_t                 user_stack_size;        /**< 用户空间堆栈范围（以字节为单位）。 */
+    rt_uint32_t                 *kernel_sp;             /**< 在用户转换期间保存的内核堆栈指针。 */
+    rt_list_t                   sibling;                /**< 所属进程的线程列表中的节点。 */
 
-    struct lwp_thread_signal    signal;                 /**< Mask and queued signals private to this user thread. */
-    struct rt_user_context      user_ctx;               /**< Saved architecture-neutral userspace context. */
-    struct rt_wakeup            wakeup_handle;          /**< Adapter for removing this thread from an RT-Smart wait. */
-    rt_atomic_t                 exit_request;           /**< Asynchronous request for this thread to terminate. */
-    int                         tid;                    /**< Process-visible thread identifier. */
-    int                         tid_ref_count;          /**< References keeping the TID mapping alive. */
-    void                        *susp_recycler;         /**< Recycler waiting for this suspended thread to finish. */
-    void                        *robust_list;           /**< Userspace robust/PI-lock list; validate every access carefully. */
+    struct lwp_thread_signal    signal;                 /**< 掩码和排队信号对此用户线程私有。 */
+    struct rt_user_context      user_ctx;               /**< 保存的架构中立的用户空间上下文。 */
+    struct rt_wakeup            wakeup_handle;          /**< 用于从 RT-Smart 等待中删除此线程的适配器。 */
+    rt_atomic_t                 exit_request;           /**< 异步请求该线程终止。 */
+    int                         tid;                    /**< 进程可见的线程标识符。 */
+    int                         tid_ref_count;          /**< 保持 TID 映射活动的参考文献。 */
+    void                        *susp_recycler;         /**< 回收器正在等待这个挂起的线程完成。 */
+    void                        *robust_list;           /**< 用户空间鲁棒/PI 锁定列表；仔细验证每个访问。 */
 
 #ifndef ARCH_MM_MMU
-    lwp_sighandler_t            signal_handler[32];    /**< Per-signal handlers for no-MMU RT-Smart targets. */
+    lwp_sighandler_t            signal_handler[32];    /**< no-MMU RT-Smart 目标的每信号处理程序。 */
 #else
-    int                         step_exec;              /**< Debugger single-step execution request/state. */
-    int                         debug_attach_req;       /**< Pending debugger attach request. */
-    int                         debug_ret_user;         /**< Debugger should return control to userspace. */
-    int                         debug_suspend;          /**< Thread is suspended by the debugger. */
-    struct rt_hw_exp_stack      *regs;                  /**< Architecture exception frame for ptrace/debugging. */
-    void                        *thread_idr;             /**< Saved architecture thread-ID/TLS register value. */
-    int                         *clear_child_tid;       /**< Userspace address cleared and futex-woken on exit. */
+    int                         step_exec;              /**< 调试器单步执行请求/状态。 */
+    int                         debug_attach_req;       /**< 待处理的调试器附加请求。 */
+    int                         debug_ret_user;         /**< 调试器应将控制权返回给用户空间。 */
+    int                         debug_suspend;          /**< 线程被调试器挂起。 */
+    struct rt_hw_exp_stack      *regs;                  /**< ptrace/调试的架构异常框架。 */
+    void                        *thread_idr;             /**< 保存的架构线程 ID/TLS 寄存器值。 */
+    int                         *clear_child_tid;       /**< 用户空间地址在退出时被清除并被 futex 唤醒。 */
 #endif /* ARCH_MM_MMU */
 #endif /* RT_USING_SMART */
 
 #ifdef RT_USING_CPU_USAGE_TRACER
-    rt_ubase_t                  user_time;              /**< Accumulated execution units in userspace. */
-    rt_ubase_t                  system_time;            /**< Accumulated execution units in kernel space. */
-    rt_ubase_t                  total_time_prev;        /**< Previous total-time snapshot used for deltas. */
-    rt_uint8_t                  cpu_usage;              /**< Most recently calculated CPU utilization percentage. */
+    rt_ubase_t                  user_time;              /**< 用户空间中累积的执行单元。 */
+    rt_ubase_t                  system_time;            /**< 内核空间中累积的执行单元。 */
+    rt_ubase_t                  total_time_prev;        /**< 之前用于增量的总时间快照。 */
+    rt_uint8_t                  cpu_usage;              /**< 最近计算的 CPU 利用率。 */
 #endif /* RT_USING_CPU_USAGE_TRACER */
 
 #ifdef RT_USING_MEM_PROTECTION
-    void *mem_regions;                                 /**< Architecture-defined memory-protection region set. */
+    void *mem_regions;                                 /**< 架构定义的内存保护区域集。 */
 #ifdef RT_USING_HW_STACK_GUARD
-    void *stack_buf;                                   /**< Stack allocation metadata retained for guard setup. */
+    void *stack_buf;                                   /**< 保留用于保护设置的堆栈分配元数据。 */
 #endif /* RT_USING_HW_STACK_GUARD */
 #endif /* RT_USING_MEM_PROTECTION */
 
-    struct rt_spinlock          spinlock;               /**< Protects exit-time mutex cleanup and selected RT-Smart recycler snapshots. */
-    rt_ubase_t                  user_data;              /**< Application-owned scalar/pointer-sized extension slot. */
+    struct rt_spinlock          spinlock;               /**< 保护退出时互斥体清理和选定的 RT-Smart 回收器快照。 */
+    rt_ubase_t                  user_data;              /**< 应用程序拥有的标量/指针大小的扩展槽。 */
 };
 typedef struct rt_thread *rt_thread_t;
 
 #ifdef RT_USING_SMART
-/** True when an RT-Smart thread's saved state represents userspace execution. */
+/** 当 RT-Smart 线程的保存状态表示用户空间执行时为真。 */
 #define LWP_IS_USER_MODE(t) ((t)->user_ctx.ctx == RT_NULL)
 #else
 #define LWP_IS_USER_MODE(t) (0)
@@ -1189,58 +1133,51 @@ typedef struct rt_thread *rt_thread_t;
 /**@{*/
 
 /**
- * IPC wait ordering and generic control commands.
+ * IPC 等待排序和通用控制命令。
  *
- * FIFO preserves arrival order.  PRIO orders waiters by effective scheduling
- * priority so that a numerically smaller (higher-priority) thread can be woken
- * first.  RT_WAITING_NO makes a take/receive operation non-blocking, while
- * RT_WAITING_FOREVER suppresses installation of a timeout timer.
+ * FIFO 保留到货订单。  PRIO 按有效调度优先级对等待者进行排序，以便可以首先唤醒数字为 smaller（较高优先级）的线程。  RT_WAITING_NO 使获取/接收操作成为非阻塞，而 RT_WAITING_FOREVER 则抑制超时定时器的安装。
  */
-#define RT_IPC_FLAG_FIFO                0x00            /**< FIFOed IPC. @ref group_thread_comm. */
-#define RT_IPC_FLAG_PRIO                0x01            /**< PRIOed IPC. @ref group_thread_comm. */
+#define RT_IPC_FLAG_FIFO                0x00            /**< 先进先出 IPC。 @ref group_thread_comm。 */
+#define RT_IPC_FLAG_PRIO                0x01            /**< PRIOed IPC。 @ref group_thread_comm。 */
 
-#define RT_IPC_CMD_UNKNOWN              0x00            /**< unknown IPC command */
-#define RT_IPC_CMD_RESET                0x01            /**< reset IPC object */
-#define RT_IPC_CMD_GET_STATE            0x02            /**< get the state of IPC object */
-#define RT_IPC_CMD_SET_VLIMIT           0x03            /**< set max limit value of IPC value */
+#define RT_IPC_CMD_UNKNOWN              0x00            /**<未知IPC命令*/
+#define RT_IPC_CMD_RESET                0x01            /**<重置IPC对象*/
+#define RT_IPC_CMD_GET_STATE            0x02            /**< 获取IPC对象的状态 */
+#define RT_IPC_CMD_SET_VLIMIT           0x03            /**<设置IPC值的最大限值*/
 
-#define RT_WAITING_FOREVER              -1              /**< Block forever until get resource. */
-#define RT_WAITING_NO                   0               /**< Non-block. */
+#define RT_WAITING_FOREVER              -1              /**< 永远阻塞，直到获得资源。 */
+#define RT_WAITING_NO                   0               /**< 非块。 */
 
 /**
- * @brief Common base of semaphore, mutex, event, mailbox, and message queue.
+ * @brief 信号量、互斥量、事件、邮箱和消息队列的公共基础。
  *
- * The parent object's flag stores the IPC wait-order policy.  suspend_thread is
- * the receiver/acquirer wait queue.  Mailboxes and message queues additionally
- * carry a sender wait queue for the full-buffer case.
+ * 父对象的标志存储IPC等待顺序策略。  suspend_thread 是接收方/获取方等待队列。  邮箱和消息队列另外还带有一个用于满缓冲区情况的发送者等待队列。
  */
 struct rt_ipc_object
 {
-    struct rt_object parent;                            /**< inherit from rt_object */
+    struct rt_object parent;                            /**<继承自rt_object */
 
-    rt_list_t suspend_thread;                           /**< Threads blocked waiting to acquire/receive this resource. */
+    rt_list_t suspend_thread;                           /**< 线程被阻塞等待获取/接收此资源。 */
 };
 
 /**
- * @addtogroup group_semaphore Semaphore
+ * @addtogroup group_semaphore 信号量
  * @{
  */
 
 #ifdef RT_USING_SEMAPHORE
 /**
- * @brief Counting semaphore control block.
+ * @brief 计数信号量控制块。
  *
- * value is the immediately available token count and never exceeds max_value.
- * spinlock makes the counter update and waiter transfer atomic with respect to
- * interrupts and other CPUs.
+ * 值是立即可用的令牌计数，并且永远不会超过 max_value。自旋锁使计数器更新和等待传输相对于中断和其他 CPU 而言是原子的。
  */
 struct rt_semaphore
 {
-    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+    struct rt_ipc_object parent;                        /**<继承自ipc_object */
 
-    rt_uint16_t          value;                         /**< Tokens currently available without blocking. */
-    rt_uint16_t          max_value;                     /**< Saturation/validation limit for value. */
-    struct rt_spinlock   spinlock;                      /**< Protects value and the inherited wait queue. */
+    rt_uint16_t          value;                         /**< 当前可用且无阻塞的令牌。 */
+    rt_uint16_t          max_value;                     /**< 值的饱和/验证限制。 */
+    struct rt_spinlock   spinlock;                      /**< 保护值和继承的等待队列。 */
 };
 typedef struct rt_semaphore *rt_sem_t;
 #endif /* RT_USING_SEMAPHORE */
@@ -1248,34 +1185,28 @@ typedef struct rt_semaphore *rt_sem_t;
 /**@}*/
 
 /**
- * @addtogroup group_mutex Mutex
+ * @addtogroup group_mutex 互斥体
  * @{
  */
 
 #ifdef RT_USING_MUTEX
 /**
- * @brief Recursive mutex with priority-inversion mitigation.
+ * @brief 具有优先级反转缓解功能的递归互斥体。
  *
- * owner may acquire the mutex repeatedly; hold counts the nesting depth.  The
- * mutex is also linked into owner->taken_object_list through taken_list.  The
- * priority fields retain the configured ceiling and the best priority among
- * waiters so the implementation can propagate and later restore effective
- * priorities.  During normal operation a mutex may be released only by owner.
- * Kernel cleanup is the deliberate exception: it may unwind a mutex whose
- * recorded owner has already entered RT_THREAD_CLOSE state.
+ * 所有者可以重复获取互斥锁； Hold 计算嵌套深度。  互斥锁还通过 taken_list 链接到所有者->taken_object_list。  优先级字段保留配置的上限和等待者之间的最佳优先级，以便实现可以传播并稍后恢复有效的优先级。  在正常操作期间，互斥体只能由所有者释放。内核清理是故意的例外：它可能会解除其记录所有者已进入 RT_THREAD_CLOSE 状态的互斥体。
  */
 struct rt_mutex
 {
-    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+    struct rt_ipc_object parent;                        /**<继承自ipc_object */
 
-    rt_uint8_t           ceiling_priority;              /**< Configured priority ceiling; numerically lower means higher. */
-    rt_uint8_t           priority;                      /**< Highest effective priority represented by pending waiters. */
-    rt_uint8_t           hold;                          /**< Recursive acquisition depth held by owner. */
-    rt_uint8_t           reserved;                      /**< Padding/reserved byte; callers must not use it. */
+    rt_uint8_t           ceiling_priority;              /**< 配置的优先级上限；数字越低意味着越高。 */
+    rt_uint8_t           priority;                      /**< 由待处理的等待者代表的最高有效优先级。 */
+    rt_uint8_t           hold;                          /**< 所有者持有的递归获取深度。 */
+    rt_uint8_t           reserved;                      /**< 填充/保留字节；呼叫者不得使用它。 */
 
-    struct rt_thread    *owner;                         /**< Thread that currently owns the mutex, or NULL. */
-    rt_list_t            taken_list;                    /**< Node in owner->taken_object_list. */
-    struct rt_spinlock   spinlock;                      /**< Protects ownership, hold count, priority, and waiters. */
+    struct rt_thread    *owner;                         /**< 当前拥有互斥锁的线程，或 NULL。 */
+    rt_list_t            taken_list;                    /**< 所有者中的节点->taken_object_list。 */
+    struct rt_spinlock   spinlock;                      /**< 保护所有权、保留计数、优先级和服务员。 */
 };
 typedef struct rt_mutex *rt_mutex_t;
 #endif /* RT_USING_MUTEX */
@@ -1283,33 +1214,29 @@ typedef struct rt_mutex *rt_mutex_t;
 /**@}*/
 
 /**
- * @addtogroup group_event Event
+ * @addtogroup group_event 事件
  * @{
  */
 
 #ifdef RT_USING_EVENT
 /**
- * Event receive-option flags.  Exactly one of AND/OR describes matching;
- * CLEAR consumes the matched bits atomically when the receive succeeds.
+ * 事件接收选项标志。  AND/OR 恰好之一描述匹配；当接收成功时，CLEAR 以原子方式消耗匹配的位。
  */
-#define RT_EVENT_FLAG_AND               0x01            /**< logic and */
-#define RT_EVENT_FLAG_OR                0x02            /**< logic or */
-#define RT_EVENT_FLAG_CLEAR             0x04            /**< clear flag */
+#define RT_EVENT_FLAG_AND               0x01            /**<逻辑与*/
+#define RT_EVENT_FLAG_OR                0x02            /**<逻辑或*/
+#define RT_EVENT_FLAG_CLEAR             0x04            /**<清除标志*/
 
 /**
- * @brief Event-bit synchronization object.
+ * @brief 事件位同步对象。
  *
- * Each blocked receiver stores its requested mask and options in its TCB.
- * Sending bits ORs them into set and scans waiters for matching AND/OR
- * conditions.  Event bits represent state, not queued occurrences; repeatedly
- * sending an already-set bit does not accumulate a count.
+ * 每个被阻止的接收器将其请求的掩码和选项存储在其 TCB 中。发送位或将它们放入集合中，并扫描等待者以查找匹配的 AND/OR 条件。  事件位代表状态，而不是排队的事件；重复发送已设置的位不会累积计数。
  */
 struct rt_event
 {
-    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+    struct rt_ipc_object parent;                        /**<继承自ipc_object */
 
-    rt_uint32_t          set;                           /**< Current 32-bit event state. */
-    struct rt_spinlock   spinlock;                      /**< Protects set and receiver wakeup selection. */
+    rt_uint32_t          set;                           /**< 当前 32 位事件状态。 */
+    struct rt_spinlock   spinlock;                      /**< 保护设置和接收器唤醒选择。 */
 };
 typedef struct rt_event *rt_event_t;
 #endif /* RT_USING_EVENT */
@@ -1317,33 +1244,30 @@ typedef struct rt_event *rt_event_t;
 /**@}*/
 
 /**
- * @addtogroup group_mailbox MailBox
+ * @addtogroup group_mailbox 邮箱
  * @{
  */
 
 #ifdef RT_USING_MAILBOX
 /**
- * @brief Ring buffer of pointer-width messages.
+ * @brief 指针宽度消息的环形缓冲区。
  *
- * A mailbox copies one rt_ubase_t value per message; it does not copy data
- * referenced by that value.  entry is the current occupancy, while in_offset
- * and out_offset wrap modulo size.  Receivers wait on the inherited queue and
- * senders blocked by a full ring wait on suspend_sender_thread.
+ * 邮箱每条消息复制一个 rt_ubase_t 值；它不会复制该值引用的数据。  条目是当前占用情况，而 in_offset 和 out_offset 则以模大小换行。  接收方在继承的队列上等待，发送方在 suspend_sender_thread 上被满环等待阻塞。
  */
 struct rt_mailbox
 {
-    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+    struct rt_ipc_object parent;                        /**<继承自ipc_object */
 
-    rt_ubase_t          *msg_pool;                      /**< Array of slots: caller-owned for init, heap-owned for create. */
+    rt_ubase_t          *msg_pool;                      /**< 槽数组：init 时由调用者拥有，create 时由堆拥有。 */
 
-    rt_uint16_t          size;                          /**< Total number of slots in msg_pool. */
+    rt_uint16_t          size;                          /**< msg_pool 中的槽总数。 */
 
-    rt_uint16_t          entry;                         /**< Number of currently queued messages. */
-    rt_uint16_t          in_offset;                     /**< Ring index at which the next normal send writes. */
-    rt_uint16_t          out_offset;                    /**< Ring index from which the next receive reads. */
+    rt_uint16_t          entry;                         /**< 当前排队消息的数量。 */
+    rt_uint16_t          in_offset;                     /**< 下一个正常发送写入的环索引。 */
+    rt_uint16_t          out_offset;                    /**< 下一个接收读取的环索引。 */
 
-    rt_list_t            suspend_sender_thread;         /**< Threads blocked because the ring is full. */
-    struct rt_spinlock   spinlock;                      /**< Protects ring indexes, occupancy, and both wait queues. */
+    rt_list_t            suspend_sender_thread;         /**< 由于环已满，线程被阻塞。 */
+    struct rt_spinlock   spinlock;                      /**< 保护环索引、占用率和两个等待队列。 */
 };
 typedef struct rt_mailbox *rt_mailbox_t;
 #endif /* RT_USING_MAILBOX */
@@ -1351,38 +1275,33 @@ typedef struct rt_mailbox *rt_mailbox_t;
 /**@}*/
 
 /**
- * @addtogroup group_messagequeue Message Queue
+ * @addtogroup group_messagequeue 消息队列
  * @{
  */
 
 #ifdef RT_USING_MESSAGEQUEUE
 /**
- * @brief Queue of fixed-capacity, copy-by-value messages.
+ * @brief 固定容量、按值复制消息的队列。
  *
- * msg_pool is divided into max_msgs internal nodes, each large enough for an
- * implementation header plus an aligned msg_size payload.  The three private
- * pointers form the queued-message chain and the free-node pool.  The queued
- * chain is FIFO for ordinary sends, but priority-send/priority-receive support
- * may order nodes by message priority.  Unlike a mailbox, a send copies up to
- * msg_size bytes into a queue-owned node.
+ * msg_pool 分为 max_msgs 内部节点，每个节点都足够大，可容纳实现头加上对齐的 msg_size 有效负载。  三个私有指针形成排队消息链和空闲节点池。  对于普通发送，排队链是 FIFO，但优先发送/优先接收支持可以按消息优先级对节点进行排序。  与邮箱不同，发送将最多 msg_size 字节复制到队列拥有的节点中。
  */
 struct rt_messagequeue
 {
-    struct rt_ipc_object parent;                        /**< inherit from ipc_object */
+    struct rt_ipc_object parent;                        /**<继承自ipc_object */
 
-    void                *msg_pool;                      /**< Node storage: caller-owned for init, heap-owned for create. */
+    void                *msg_pool;                      /**< 节点存储：init 时由调用者拥有，create 时由堆拥有。 */
 
-    rt_uint16_t          msg_size;                      /**< Maximum payload bytes stored in each node. */
-    rt_uint16_t          max_msgs;                      /**< Total node count and maximum queue depth. */
+    rt_uint16_t          msg_size;                      /**< 每个节点中存储的最大有效负载字节。 */
+    rt_uint16_t          max_msgs;                      /**< 总节点数和最大队列深度。 */
 
-    rt_uint16_t          entry;                         /**< Number of messages currently queued. */
+    rt_uint16_t          entry;                         /**< 当前排队的消息数。 */
 
-    void                *msg_queue_head;                /**< First queued internal message node. */
-    void                *msg_queue_tail;                /**< Last queued internal message node. */
-    void                *msg_queue_free;                /**< Head of the internal free-node chain. */
+    void                *msg_queue_head;                /**< 第一个排队的内部消息节点。 */
+    void                *msg_queue_tail;                /**< 最后排队的内部消息节点。 */
+    void                *msg_queue_free;                /**< 内部自由节点链的头。 */
 
-    rt_list_t            suspend_sender_thread;         /**< Senders blocked because no free node is available. */
-    struct rt_spinlock   spinlock;                      /**< Protects node chains, entry, and wait queues. */
+    rt_list_t            suspend_sender_thread;         /**< 由于没有可用的空闲节点，发件人被阻止。 */
+    struct rt_spinlock   spinlock;                      /**< 保护节点链、条目和等待队列。 */
 };
 typedef struct rt_messagequeue *rt_mq_t;
 #endif /* RT_USING_MESSAGEQUEUE */
@@ -1399,28 +1318,24 @@ typedef struct rt_messagequeue *rt_mq_t;
 
 #ifdef RT_USING_HEAP
 /**
- * @brief Common statistics object for system-heap backends.
+ * @brief 系统堆后端的通用统计对象。
  *
- * Small-memory and slab allocators expose the same public rt_mem_t handle by
- * embedding this descriptor in their private implementation object.  Values
- * report allocator-managed payload/accounting bytes and need not equal raw BSP
- * region boundaries after alignment and metadata overhead are applied.
+ * 小内存和平板分配器通过将此描述符嵌入到其私有实现对象中来公开相同的公共 rt_mem_t 句柄。  值报告分配器管理的有效负载/记帐字节，并且在应用对齐和元数据开销后不需要等于原始 BSP 区域边界。
  */
 struct rt_memory
 {
-    struct rt_object        parent;                 /**< Base object; must remain the first field. */
-    const char *            algorithm;              /**< Human-readable allocator/backend name. */
-    rt_ubase_t              address;                /**< Aligned start address of the managed region. */
-    rt_size_t               total;                  /**< Total bytes managed by this allocator. */
-    rt_size_t               used;                   /**< Current accounted allocation in bytes. */
-    rt_size_t               max;                    /**< High-water mark of used since initialization. */
+    struct rt_object        parent;                 /**< 基础对象；必须保留在第一个字段。 */
+    const char *            algorithm;              /**< 人类可读的分配器/后端名称。 */
+    rt_ubase_t              address;                /**< 管理区域的对齐起始地址。 */
+    rt_size_t               total;                  /**< 此分配器管理的总字节数。 */
+    rt_size_t               used;                   /**< 当前分配的字节数。 */
+    rt_size_t               max;                    /**< 自初始化以来使用的高水位线。 */
 };
 typedef struct rt_memory *rt_mem_t;
 #endif /* RT_USING_HEAP */
 
 /*
- * memory management
- * heap & partition
+ * 内存管理堆和分区
  */
 
 #ifdef RT_USING_SMALL_MEM
@@ -1433,82 +1348,71 @@ typedef rt_mem_t rt_slab_t;
 
 #ifdef RT_USING_MEMHEAP
 /**
- * @brief Boundary tag and list links stored before a memheap allocation.
+ * @brief 在内存堆分配之前存储的边界标记和列表链接。
  *
- * Every physical block participates in the address-ordered next/prev chain;
- * only free blocks participate in next_free/prev_free.  pool_ptr identifies the
- * owning heap when multiple memheaps feed the system allocator.  magic encodes
- * allocation state and is checked to detect invalid or repeated frees.
+ * 每个物理块都参与地址排序的下一个/上一个链；只有空闲区块参与next_free/prev_free。  当多个内存堆为系统分配器提供数据时，pool_ptr 标识所属堆。  magic 对分配状态进行编码，并进行检查以检测无效或重复的释放。
  */
 struct rt_memheap_item
 {
-    rt_uint32_t             magic;                      /**< Integrity/allocation-state marker. */
-    struct rt_memheap      *pool_ptr;                   /**< Heap that owns this block. */
+    rt_uint32_t             magic;                      /**< 完整性/分配状态标记。 */
+    struct rt_memheap      *pool_ptr;                   /**< 拥有该块的堆。 */
 
-    struct rt_memheap_item *next;                       /**< Next physical block by address. */
-    struct rt_memheap_item *prev;                       /**< Previous physical block by address. */
+    struct rt_memheap_item *next;                       /**< 按地址的下一个物理块。 */
+    struct rt_memheap_item *prev;                       /**< 按地址的前一个物理块。 */
 
-    struct rt_memheap_item *next_free;                  /**< Next free block in allocator search order. */
-    struct rt_memheap_item *prev_free;                  /**< Previous free block in allocator search order. */
+    struct rt_memheap_item *next_free;                  /**< 分配器搜索顺序中的下一个空闲块。 */
+    struct rt_memheap_item *prev_free;                  /**< 分配器搜索顺序中的前一个空闲块。 */
 #ifdef RT_USING_MEMTRACE
-    rt_uint8_t              owner_thread_name[4];       /**< Truncated allocating-thread name for diagnostics. */
+    rt_uint8_t              owner_thread_name[4];       /**< 用于诊断的截断分配线程名称。 */
 #endif /* RT_USING_MEMTRACE */
 };
 
 /**
- * @brief Variable-size allocator over one caller-provided memory region.
+ * @brief 在一个调用者提供的内存区域上的可变大小分配器。
  *
- * block_list points to the first physical boundary-tag block; free_header is
- * the embedded free-list sentinel and free_list normally points to that
- * sentinel as the search anchor.  The embedded semaphore normally
- * serializes allocation.  When locked is true an outer system-heap lock already
- * provides serialization, avoiding recursive locking and early-startup
- * dependence on the semaphore.
+ * block_list 指向第一个物理边界标签块； free_header 是嵌入式空闲列表哨兵，free_list 通常指向该哨兵作为搜索锚点。  嵌入式信号量通常会序列化分配。  当locked为true时，外部系统堆锁已经提供了序列化，避免了递归锁定和早期启动对信号量的依赖。
  */
 struct rt_memheap
 {
-    struct rt_object        parent;                     /**< inherit from rt_object */
+    struct rt_object        parent;                     /**<继承自rt_object */
 
-    void                   *start_addr;                 /**< Caller-supplied start; allocator assumes required alignment. */
+    void                   *start_addr;                 /**< 调用者提供的开始；分配器假定需要对齐。 */
 
-    rt_size_t               pool_size;                  /**< Supplied size rounded down; includes allocator boundary headers. */
-    rt_size_t               available_size;            /**< Current free bytes tracked by the allocator. */
-    rt_size_t               max_used_size;              /**< High-water mark of allocated bytes. */
+    rt_size_t               pool_size;                  /**< 提供的尺寸向下舍入；包括分配器边界标头。 */
+    rt_size_t               available_size;            /**< 分配器跟踪的当前空闲字节。 */
+    rt_size_t               max_used_size;              /**< 已分配字节的高水位线。 */
 
-    struct rt_memheap_item *block_list;                 /**< Sentinel/entry for the physical block chain. */
+    struct rt_memheap_item *block_list;                 /**< 物理区块链的哨兵/条目。 */
 
-    struct rt_memheap_item *free_list;                  /**< Free-list sentinel/search anchor (normally &free_header). */
-    struct rt_memheap_item  free_header;                /**< Embedded sentinel for the free-block chain. */
+    struct rt_memheap_item *free_list;                  /**< 空闲列表哨兵/搜索 anchor（通常为 &free_header）。 */
+    struct rt_memheap_item  free_header;                /**< 自由区块链的嵌入式哨兵。 */
 
-    struct rt_semaphore     lock;                       /**< Internal allocator mutex-like semaphore. */
-    rt_bool_t               locked;                     /**< True when synchronization is supplied externally. */
+    struct rt_semaphore     lock;                       /**< 内部分配器类似互斥信号量。 */
+    rt_bool_t               locked;                     /**< 当外部提供同步时为真。 */
 };
 #endif /* RT_USING_MEMHEAP */
 
 #ifdef RT_USING_MEMPOOL
 /**
- * @brief Fixed-size block pool with optional blocking allocation.
+ * @brief 固定大小的块池，具有可选的块分配。
  *
- * Free blocks reuse their first pointer-sized bytes to link block_list.  A take
- * can suspend when block_free_count is zero; rt_mp_free() returns a block and
- * wakes one waiter.  The pool neither constructs nor destroys objects stored in
- * blocks, and callers must return each block to its original pool exactly once.
+ * 空闲块重用其第一个指针大小的字节来链接 block_list。  当 block_free_count 为零时，可以暂停拍摄； rt_mp_free() 返回一个块并唤醒一名服务员。  池既不构造也不销毁存储在块中的对象，并且调用者必须将每个块返回到其原始池一次。
  */
 struct rt_mempool
 {
-    struct rt_object    parent;                            /**< inherit from rt_object */
+    struct rt_object    parent;                            /**<继承自rt_object */
 
-    void                *start_address;                    /**< Backing storage: caller-owned for init, heap-owned for create. */
-    rt_size_t           size;                             /**< Total bytes supplied for the pool. */
+    void                *start_address;                    /**< 后备存储：init 时由调用者拥有，create 时由堆拥有。 */
+    rt_size_t           size;                             /**< 为池提供的总字节数。 */
 
-    rt_size_t           block_size;                       /**< Aligned bytes in each allocatable block. */
-    rt_uint8_t          *block_list;                       /**< Head of the intrusive free-block chain. */
+    rt_size_t           block_size;                       /**< 每个可分配块中的对齐字节。 */
+    rt_uint8_t          *block_list;                       /**< 侵入式自由区块链的头部。 */
 
-    rt_size_t           block_total_count;                /**< Number of blocks carved from the region. */
-    rt_size_t           block_free_count;                 /**< Number of blocks currently available. */
+    rt_size_t           block_total_count;                /**< 从该区域雕刻的方块数量。 */
+    rt_size_t           block_free_count;                 /**< 当前可用的块数。 */
 
-    rt_list_t           suspend_thread;                   /**< Threads blocked waiting for a free block. */
-    struct rt_spinlock  spinlock;                         /**< Protects free chain, counters, and waiters. */
+    rt_list_t           suspend_thread;                   /**< 线程被阻塞等待空闲块。 */
+    struct rt_spinlock  spinlock;                         /**< 保护空闲链、柜台和服务员。 */
 };
 typedef struct rt_mempool *rt_mp_t;
 #endif /* RT_USING_MEMPOOL */
@@ -1523,102 +1427,92 @@ typedef struct rt_mempool *rt_mp_t;
 /**@{*/
 
 /**
- * @brief Coarse class used for discovery and class-specific control ranges.
+ * @brief 用于发现和特定于类别的控制范围的粗略类别。
  *
- * This value identifies the public role of a device, not the concrete driver or
- * bus used to reach it.  A class driver may embed rt_device in a larger object
- * and keep protocol-specific state after the base object.
+ * 该值标识设备的公共角色，而不是用于访问它的具体驱动程序或总线。  类驱动程序可以将 rt_device 嵌入到更大的对象中，并在基础对象之后保留协议特定的状态。
  */
 enum rt_device_class_type
 {
-    RT_Device_Class_Char = 0,                           /**< character device */
-    RT_Device_Class_Block,                              /**< block device */
-    RT_Device_Class_NetIf,                              /**< net interface */
-    RT_Device_Class_MTD,                                /**< memory device */
-    RT_Device_Class_CAN,                                /**< CAN device */
-    RT_Device_Class_RTC,                                /**< RTC device */
-    RT_Device_Class_Sound,                              /**< Sound device */
-    RT_Device_Class_Graphic,                            /**< Graphic device */
-    RT_Device_Class_I2CBUS,                             /**< I2C bus device */
-    RT_Device_Class_USBDevice,                          /**< USB slave device */
-    RT_Device_Class_USBHost,                            /**< USB host bus */
-    RT_Device_Class_USBOTG,                             /**< USB OTG bus */
-    RT_Device_Class_SPIBUS,                             /**< SPI bus device */
-    RT_Device_Class_SPIDevice,                          /**< SPI device */
-    RT_Device_Class_SDIO,                               /**< SDIO bus device */
-    RT_Device_Class_PM,                                 /**< PM pseudo device */
-    RT_Device_Class_Pipe,                               /**< Pipe device */
-    RT_Device_Class_Portal,                             /**< Portal device */
-    RT_Device_Class_Timer,                              /**< Timer device */
-    RT_Device_Class_Miscellaneous,                      /**< Miscellaneous device */
-    RT_Device_Class_Sensor,                             /**< Sensor device */
-    RT_Device_Class_Touch,                              /**< Touch device */
-    RT_Device_Class_PHY,                                /**< PHY device */
-    RT_Device_Class_Security,                           /**< Security device */
-    RT_Device_Class_WLAN,                               /**< WLAN device */
-    RT_Device_Class_Pin,                                /**< Pin device */
-    RT_Device_Class_ADC,                                /**< ADC device */
-    RT_Device_Class_DAC,                                /**< DAC device */
-    RT_Device_Class_WDT,                                /**< WDT device */
-    RT_Device_Class_PWM,                                /**< PWM device */
-    RT_Device_Class_Bus,                                /**< Bus device */
-    RT_Device_Class_Unknown                             /**< unknown device */
+    RT_Device_Class_Char = 0,                           /**< 字符设备 */
+    RT_Device_Class_Block,                              /**< 块设备 */
+    RT_Device_Class_NetIf,                              /**<网络接口*/
+    RT_Device_Class_MTD,                                /**<存储设备*/
+    RT_Device_Class_CAN,                                /**< CAN 设备 */
+    RT_Device_Class_RTC,                                /**< RTC 设备 */
+    RT_Device_Class_Sound,                              /**< 声音设备 */
+    RT_Device_Class_Graphic,                            /**< 图形设备 */
+    RT_Device_Class_I2CBUS,                             /**< I2C 总线设备 */
+    RT_Device_Class_USBDevice,                          /**< USB从设备 */
+    RT_Device_Class_USBHost,                            /**< USB 主机总线 */
+    RT_Device_Class_USBOTG,                             /**< USB OTG总线 */
+    RT_Device_Class_SPIBUS,                             /**< SPI总线设备 */
+    RT_Device_Class_SPIDevice,                          /**< SPI 设备 */
+    RT_Device_Class_SDIO,                               /**< SDIO总线设备 */
+    RT_Device_Class_PM,                                 /**< PM伪设备 */
+    RT_Device_Class_Pipe,                               /**< 管道设备 */
+    RT_Device_Class_Portal,                             /**< 门户设备 */
+    RT_Device_Class_Timer,                              /**< 定时器设备 */
+    RT_Device_Class_Miscellaneous,                      /**<其他设备*/
+    RT_Device_Class_Sensor,                             /**< 传感器设备 */
+    RT_Device_Class_Touch,                              /**< 触摸设备 */
+    RT_Device_Class_PHY,                                /**< PHY 设备 */
+    RT_Device_Class_Security,                           /**<安全装置*/
+    RT_Device_Class_WLAN,                               /**< WLAN 设备 */
+    RT_Device_Class_Pin,                                /**< 引脚设备 */
+    RT_Device_Class_ADC,                                /**< ADC 设备 */
+    RT_Device_Class_DAC,                                /**< DAC 设备 */
+    RT_Device_Class_WDT,                                /**< WDT 设备 */
+    RT_Device_Class_PWM,                                /**< PWM 设备 */
+    RT_Device_Class_Bus,                                /**< 总线设备 */
+    RT_Device_Class_Unknown                             /**<未知设备*/
 };
 
 /**
- * Device capability and runtime-state flags stored in rt_device::flag.
+ * 设备功能和运行时状态标志存储在 rt_device::flag 中。
  *
- * The low access bits describe supported directions, middle bits describe
- * lifecycle/capabilities, and high bits select interrupt or DMA transfer modes.
- * These are registration-time/device-state flags and are distinct from the
- * per-open request recorded in rt_device::open_flag.
+ * 低访问位描述支持的方向，中间位描述生命周期/功能，高位选择中断或 DMA 传输模式。这些是注册时间/设备状态标志，与 rt_device::open_flag 中记录的每次打开请求不同。
  */
-#define RT_DEVICE_FLAG_DEACTIVATE       0x000           /**< device is not not initialized */
+#define RT_DEVICE_FLAG_DEACTIVATE       0x000           /**< 设备未初始化 */
 
-#define RT_DEVICE_FLAG_RDONLY           0x001           /**< read only */
-#define RT_DEVICE_FLAG_WRONLY           0x002           /**< write only */
-#define RT_DEVICE_FLAG_RDWR             0x003           /**< read and write */
+#define RT_DEVICE_FLAG_RDONLY           0x001           /**<只读*/
+#define RT_DEVICE_FLAG_WRONLY           0x002           /**<只写*/
+#define RT_DEVICE_FLAG_RDWR             0x003           /**<读写*/
 
-#define RT_DEVICE_FLAG_REMOVABLE        0x004           /**< removable device */
-#define RT_DEVICE_FLAG_STANDALONE       0x008           /**< standalone device */
-#define RT_DEVICE_FLAG_ACTIVATED        0x010           /**< device is activated */
-#define RT_DEVICE_FLAG_SUSPENDED        0x020           /**< device is suspended */
-#define RT_DEVICE_FLAG_STREAM           0x040           /**< stream mode */
-#define RT_DEVICE_FLAG_DYNAMIC          0x080           /**< device is determined when open() */
+#define RT_DEVICE_FLAG_REMOVABLE        0x004           /**<可移动设备*/
+#define RT_DEVICE_FLAG_STANDALONE       0x008           /**<独立设备*/
+#define RT_DEVICE_FLAG_ACTIVATED        0x010           /**<设备已激活*/
+#define RT_DEVICE_FLAG_SUSPENDED        0x020           /**<设备已暂停*/
+#define RT_DEVICE_FLAG_STREAM           0x040           /**<流模式*/
+#define RT_DEVICE_FLAG_DYNAMIC          0x080           /**< open() 时确定设备 */
 
-#define RT_DEVICE_FLAG_INT_RX           0x100           /**< INT mode on Rx */
-#define RT_DEVICE_FLAG_DMA_RX           0x200           /**< DMA mode on Rx */
-#define RT_DEVICE_FLAG_INT_TX           0x400           /**< INT mode on Tx */
-#define RT_DEVICE_FLAG_DMA_TX           0x800           /**< DMA mode on Tx */
+#define RT_DEVICE_FLAG_INT_RX           0x100           /**< Rx 上的 INT 模式 */
+#define RT_DEVICE_FLAG_DMA_RX           0x200           /**< Rx 上的 DMA 模式 */
+#define RT_DEVICE_FLAG_INT_TX           0x400           /**< Tx 上的 INT 模式 */
+#define RT_DEVICE_FLAG_DMA_TX           0x800           /**< Tx 上的 DMA 模式 */
 
-#define RT_DEVICE_OFLAG_CLOSE           0x000           /**< device is closed */
-#define RT_DEVICE_OFLAG_RDONLY          0x001           /**< read only access */
-#define RT_DEVICE_OFLAG_WRONLY          0x002           /**< write only access */
-#define RT_DEVICE_OFLAG_RDWR            0x003           /**< read and write */
-#define RT_DEVICE_OFLAG_OPEN            0x008           /**< device is opened */
-#define RT_DEVICE_OFLAG_MASK            0xf0f           /**< mask of open flag */
+#define RT_DEVICE_OFLAG_CLOSE           0x000           /**<设备已关闭*/
+#define RT_DEVICE_OFLAG_RDONLY          0x001           /**< 只读访问 */
+#define RT_DEVICE_OFLAG_WRONLY          0x002           /**< 只写访问 */
+#define RT_DEVICE_OFLAG_RDWR            0x003           /**<读写*/
+#define RT_DEVICE_OFLAG_OPEN            0x008           /**<设备已打开*/
+#define RT_DEVICE_OFLAG_MASK            0xf0f           /**< 打开标志的掩码 */
 
 /**
- * general device commands
- * 0x01 - 0x1F general device control commands
- * 0x20 - 0x3F udevice control commands
- * 0x40 -      special device control commands
+ * 通用设备命令 0x01 - 0x1F 通用设备控制命令 0x20 - 0x3F udevice 控制命令 0x40 - 特殊设备控制命令
  */
-#define RT_DEVICE_CTRL_RESUME           0x01            /**< resume device */
-#define RT_DEVICE_CTRL_SUSPEND          0x02            /**< suspend device */
-#define RT_DEVICE_CTRL_CONFIG           0x03            /**< configure device */
-#define RT_DEVICE_CTRL_CLOSE            0x04            /**< close device */
-#define RT_DEVICE_CTRL_NOTIFY_SET       0x05            /**< set notify func */
-#define RT_DEVICE_CTRL_SET_INT          0x06            /**< set interrupt */
-#define RT_DEVICE_CTRL_CLR_INT          0x07            /**< clear interrupt */
-#define RT_DEVICE_CTRL_GET_INT          0x08            /**< get interrupt status */
-#define RT_DEVICE_CTRL_CONSOLE_OFLAG    0x09            /**< get console open flag */
-#define RT_DEVICE_CTRL_MASK             0x1f            /**< mask for contrl commands */
+#define RT_DEVICE_CTRL_RESUME           0x01            /**<恢复设备*/
+#define RT_DEVICE_CTRL_SUSPEND          0x02            /**< 挂起设备 */
+#define RT_DEVICE_CTRL_CONFIG           0x03            /**<配置设备*/
+#define RT_DEVICE_CTRL_CLOSE            0x04            /**<关闭设备*/
+#define RT_DEVICE_CTRL_NOTIFY_SET       0x05            /**< 设置通知函数 */
+#define RT_DEVICE_CTRL_SET_INT          0x06            /**<设置中断*/
+#define RT_DEVICE_CTRL_CLR_INT          0x07            /**<清除中断*/
+#define RT_DEVICE_CTRL_GET_INT          0x08            /**< 获取中断状态 */
+#define RT_DEVICE_CTRL_CONSOLE_OFLAG    0x09            /**< 获取控制台打开标志 */
+#define RT_DEVICE_CTRL_MASK             0x1f            /**< 控制命令的掩码 */
 
 /**
- * Build the base of a class-specific command namespace.  Class drivers can add
- * small command offsets to this value without colliding with generic commands
- * or commands of another device class.
+ * 构建特定于类的命令命名空间的基础。  类驱动程序可以向该值添加较小的命令偏移量，而不会与通用命令或其他设备类的命令发生冲突。
  */
 #define RT_DEVICE_CTRL_BASE(Type)        ((RT_Device_Class_##Type + 1) * 0x100)
 
@@ -1627,43 +1521,32 @@ typedef struct rt_device *rt_device_t;
 
 #ifdef RT_USING_DEVICE_OPS
 /**
- * @brief Uniform operations implemented by a concrete or class device driver.
+ * @brief 由具体或类设备驱动程序实现的统一操作。
  *
- * The core wrappers in components/drivers/core/device.c handle object lookup,
- * lazy initialization, state checks, and reference counts before dispatching
- * through this table.  A NULL optional operation is reported according to the
- * wrapper's contract.  Driver read/write callbacks normally return a
- * nonnegative transferred-unit count; an individual device class may document
- * an additional negative-error convention.  The core wrappers themselves use
- * zero plus errno for a closed device or missing operation.  The unit represented
- * by pos and size is device-class specific (bytes for streams, often blocks for
- * block devices).
+ * Components/drivers/core/device.c 中的核心包装器在通过此表进行分派之前处理对象查找、延迟初始化、状态检查和引用计数。  根据包装器的合同报告 NULL 可选操作。  驱动程序读/写回调通常返回一个非负的传输单元计数；单个设备类可能会记录附加的负错误约定。  核心包装器本身使用零加 errno 来表示关闭的设备或丢失的操作。  pos 和 size 表示的单位是设备类 specific（对于流来说是字节，对于块设备通常是块）。
  */
 struct rt_device_ops
 {
-    /* Common device interface implemented by the driver. */
-    rt_err_t  (*init)   (rt_device_t dev); /**< Put hardware/software state into an initialized state. */
-    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< Apply one open request's mode flags. */
-    rt_err_t  (*close)  (rt_device_t dev); /**< Release/disable resources when the last user closes. */
-    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< Transfer data from device to buffer. */
-    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< Transfer data from buffer to device. */
-    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< Execute generic or class-specific control command. */
+    /* 驱动程序实现的通用设备接口。 */
+    rt_err_t  (*init)   (rt_device_t dev); /**< 将硬件/软件状态置于初始化状态。 */
+    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< 应用一个打开请求的模式标志。 */
+    rt_err_t  (*close)  (rt_device_t dev); /**< 当最后一个用户关闭时释放/禁用资源。 */
+    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< 将数据从设备传输到缓冲区。 */
+    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< 将数据从缓冲区传输到设备。 */
+    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< 执行通用或特定于类的控制命令。 */
 };
 #endif /* RT_USING_DEVICE_OPS */
 
 /**
- * @brief Poll/select-compatible wait queue associated with a device or channel.
+ * @brief 与设备或通道关联的轮询/选择兼容等待队列。
  *
- * waiting_list contains framework-defined wait nodes.  flag is the waitqueue's
- * internal CLEAN/WAKEUP state, not a device readiness-event bitmask; wakeup keys
- * are delivered separately to node callbacks.  spinlock makes state updates and
- * waiter notification atomic with interrupt-side producers.
+ * waiting_list 包含框架定义的等待节点。  flag 是等待队列的内部 CLEAN/WAKEUP 状态，而不是设备就绪事件位掩码；唤醒密钥单独传递给节点回调。  自旋锁使状态更新和等待通知与中断端生产者成为原子的。
  */
 struct rt_wqueue
 {
-    rt_uint32_t flag;                  /**< Internal RT_WQ_FLAG_CLEAN/WAKEUP state. */
-    rt_list_t waiting_list;            /**< Tasks or poll requests waiting for readiness. */
-    struct rt_spinlock spinlock;       /**< Protects flag and waiting_list. */
+    rt_uint32_t flag;                  /**< 内部 RT_WQ_FLAG_CLEAN/WAKEUP 状态。 */
+    rt_list_t waiting_list;            /**< 等待准备就绪的任务或轮询请求。 */
+    struct rt_spinlock spinlock;       /**< 保护标志和 waiting_list。 */
 };
 typedef struct rt_wqueue rt_wqueue_t;
 
@@ -1673,105 +1556,94 @@ struct rt_bus;
 #endif /* RT_USING_DM */
 
 /**
- * @brief Base object shared by every RT-Thread device instance.
+ * @brief 每个 RT-Thread 设备实例共享的基础对象。
  *
- * A class/concrete driver embeds this structure at offset zero, registers it by
- * name, and supplies operations plus user_data.  The device core owns type,
- * lifecycle flags, open reference accounting, and dispatch.  With
- * RT_USING_DM, the same object also participates in bus/driver matching; Device
- * Model extends rather than replaces the rt_device API.
+ * 类/具体驱动程序将此结构嵌入到偏移量零处，按名称注册它，并提供操作加上 user_data。  设备核心拥有类型、生命周期标志、开放引用记账和调度。  对于RT_USING_DM，同一对象也参与总线/司机匹配；设备模型扩展而不是取代 rt_device API。
  */
 struct rt_device
 {
-    struct rt_object          parent;                   /**< inherit from rt_object */
+    struct rt_object          parent;                   /**<继承自rt_object */
 
 #ifdef RT_USING_DM
-    struct rt_bus *bus;                                 /**< Bus on which this device is registered. */
-    rt_list_t node;                                     /**< Node in the bus's device collection. */
-    struct rt_driver *drv;                              /**< Driver successfully bound to this device. */
+    struct rt_bus *bus;                                 /**< 注册该设备的总线。 */
+    rt_list_t node;                                     /**< 总线设备集合中的节点。 */
+    struct rt_driver *drv;                              /**< 驱动程序已成功绑定到该设备。 */
 #ifdef RT_USING_OFW
-    void *ofw_node;                                     /**< Open Firmware/device-tree node describing this instance. */
+    void *ofw_node;                                     /**< 打开描述此实例的固件/设备树节点。 */
 #endif /* RT_USING_OFW */
-    void *power_domain_unit;                            /**< Device Model power-domain attachment, if any. */
+    void *power_domain_unit;                            /**< 设备模型电源域附件（如果有）。 */
 #ifdef RT_USING_DVFS
-    void *dvfs_scaling;                                 /**< Per-device dynamic voltage/frequency scaling state. */
+    void *dvfs_scaling;                                 /**< 每设备动态电压/频率缩放状态。 */
 #endif
 #ifdef RT_USING_DMA
-    const void *dma_ops;                                /**< DMA mapping/operation set selected for this device. */
+    const void *dma_ops;                                /**< 为此设备选择的 DMA 映射/操作集。 */
 #endif
 #endif /* RT_USING_DM */
 
-    enum rt_device_class_type type;                     /**< Public device class. */
-    rt_uint16_t               flag;                     /**< Capabilities and current activation/suspend state. */
-    rt_uint16_t               open_flag;                /**< Effective mode and transfer flags of current opens. */
+    enum rt_device_class_type type;                     /**< 公共设备类。 */
+    rt_uint16_t               flag;                     /**< 功能和当前激活/挂起状态。 */
+    rt_uint16_t               open_flag;                /**< 当前打开的有效模式和传输标志。 */
 
-    rt_uint8_t                ref_count;                /**< Open references, including a core-accepted -RT_ENOSYS open result. */
+    rt_uint8_t                ref_count;                /**< 开放引用，包括核心接受的 -RT_ENOSYS 开放结果。 */
 #ifdef RT_USING_DM
-    rt_uint8_t                master_id;                /**< Device Model master/owner identifier, range 0..255. */
+    rt_uint8_t                master_id;                /**< 设备型号主/所有者标识符，范围 0..255。 */
 #endif
-    rt_uint8_t                device_id;                /**< Driver- or framework-assigned instance ID, range 0..255. */
+    rt_uint8_t                device_id;                /**< 驱动程序或框架分配的实例 ID，范围 0..255。 */
 
     /*
-     * Optional asynchronous notifications installed by an upper layer.
-     * A lower driver may invoke them from its ISR/DMA completion path, so the
-     * callback must follow that driver's context rules and the registrant must
-     * keep both function and referenced state alive until in-flight callbacks
-     * have been quiesced before replacement/unregistration.
-     */
-    rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size); /**< Notify that size units can be read; may run in ISR context. */
-    rt_err_t (*tx_complete)(rt_device_t dev, void *buffer);   /**< Notify completion of an asynchronous transmit buffer. */
+ * 上层安装的可选异步通知。较低的驱动程序可以从其 ISR/DMA 完成路径调用它们，因此回调必须遵循该驱动程序的上下文规则，并且注册者必须保持函数和引用状态都处于活动状态，直到在替换/取消注册之前停止进行中的回调。
+ */
+    rt_err_t (*rx_indicate)(rt_device_t dev, rt_size_t size); /**< 通知可以读取大小单位；可以在 ISR 上下文中运行。 */
+    rt_err_t (*tx_complete)(rt_device_t dev, void *buffer);   /**< 通知异步传输缓冲区完成。 */
 
 #ifdef RT_USING_DEVICE_OPS
-    const struct rt_device_ops *ops;                    /**< Immutable operation table supplied by the driver. */
+    const struct rt_device_ops *ops;                    /**< 驱动程序提供的不可变操作表。 */
 #else
-    /* Legacy ABI stores the same common operations directly in each object. */
-    rt_err_t  (*init)   (rt_device_t dev); /**< Initialize the device. */
-    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< Apply requested open mode. */
-    rt_err_t  (*close)  (rt_device_t dev); /**< Close/release the device. */
-    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< Read device-specific units. */
-    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< Write device-specific units. */
-    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< Execute a control command. */
+    /* 旧版 ABI 将相同的通用操作直接存储在每个对象中。 */
+    rt_err_t  (*init)   (rt_device_t dev); /**< 初始化设备。 */
+    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag); /**< 应用请求的打开模式。 */
+    rt_err_t  (*close)  (rt_device_t dev); /**< 关闭/释放设备。 */
+    rt_ssize_t (*read)  (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size); /**< 读取设备特定的单位。 */
+    rt_ssize_t (*write) (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size); /**< 写入特定于设备的单位。 */
+    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args); /**< 执行控制命令。 */
 #endif /* RT_USING_DEVICE_OPS */
 
 #ifdef RT_USING_POSIX_DEVIO
-    const struct dfs_file_ops *fops;                    /**< POSIX/DFS file operations exposed by this device. */
-    struct rt_wqueue wait_queue;                        /**< poll/select waiters for this device. */
+    const struct dfs_file_ops *fops;                    /**< POSIX/DFS 文件操作由该设备公开。 */
+    struct rt_wqueue wait_queue;                        /**< 轮询/选择该设备的服务员。 */
 #endif /* RT_USING_POSIX_DEVIO */
 
     rt_err_t (*readlink)
-        (rt_device_t dev, char *buf, int len);          /**< Return the devfs symbolic-link target exposed by this device. */
+        (rt_device_t dev, char *buf, int len);          /**< 返回该设备公开的 devfs 符号链接目标。 */
 
-    void                     *user_data;                /**< Opaque class/concrete-driver private state. */
+    void                     *user_data;                /**< 不透明类/具体驱动程序私有状态。 */
 };
 
 /**
- * @brief Pair used to register a device-specific notification callback.
+ * @brief 用于注册特定于设备的通知回调的对。
  */
 struct rt_device_notify
 {
-    void (*notify)(rt_device_t dev);                    /**< Driver-triggered callback; execution context is driver-specific. */
-    struct rt_device *dev;                              /**< Device associated with the notification. */
+    void (*notify)(rt_device_t dev);                    /**< 驱动程序触发的回调；执行上下文是特定于驱动程序的。 */
+    struct rt_device *dev;                              /**< 与通知关联的设备。 */
 };
 
 #ifdef RT_USING_SMART
 /**
- * @brief RT-Smart synchronous message/reply channel.
+ * @brief RT-Smart 同步消息/回复通道。
  *
- * A channel is an IPC object that coordinates sender messages, blocked sender
- * threads, one reply target, and pollable reader readiness.  slock protects all
- * queue and state transitions; ref controls lifetime while users retain the
- * channel.
+ * 通道是一种 IPC 对象，它协调发送者消息、阻塞的发送者线程、一个回复目标和可轮询的读取器准备情况。  slock 保护所有队列和状态转换； ref 控制生命周期，而用户保留通道。
  */
 struct rt_channel
 {
-    struct rt_ipc_object parent;                        /**< Base IPC object and generic wait queue. */
-    struct rt_thread *reply;                            /**< Sending thread currently waiting to receive a reply. */
-    struct rt_spinlock slock;                           /**< Protects channel state and all private queues. */
-    rt_list_t wait_msg;                                 /**< Pending sender-message descriptors. */
-    rt_list_t wait_thread;                              /**< Sender threads blocked awaiting receive/reply. */
-    rt_wqueue_t reader_queue;                           /**< poll/select queue for readable channel state. */
-    rt_uint8_t  stat;                                   /**< Implementation-defined channel lifecycle/status bits. */
-    rt_ubase_t  ref;                                    /**< Channel reference count. */
+    struct rt_ipc_object parent;                        /**< 基本 IPC 对象和通用等待队列。 */
+    struct rt_thread *reply;                            /**< 发送线程当前正在等待接收回复。 */
+    struct rt_spinlock slock;                           /**< 保护通道状态和所有私有队列。 */
+    rt_list_t wait_msg;                                 /**< 待处理的发送者消息描述符。 */
+    rt_list_t wait_thread;                              /**< 发送者线程被阻止等待接收/回复。 */
+    rt_wqueue_t reader_queue;                           /**< 轮询/选择可读通道状态的队列。 */
+    rt_uint8_t  stat;                                   /**< 实现定义的通道生命周期/状态位。 */
+    rt_ubase_t  ref;                                    /**< 通道引用计数。 */
 };
 typedef struct rt_channel *rt_channel_t;
 #endif /* RT_USING_SMART */
@@ -1784,12 +1656,12 @@ typedef struct rt_channel *rt_channel_t;
 #endif
 
 #ifdef __cplusplus
-/* RT-Thread definitions for C++ */
+/* C++ 的 RT-Thread 定义 */
 namespace rtthread {
 
 enum TICK_WAIT {
-    WAIT_NONE = 0,       /**< Perform a non-blocking operation. */
-    WAIT_FOREVER = -1,   /**< Block without installing a finite timeout. */
+    WAIT_NONE = 0,       /**< 执行非阻塞操作。 */
+    WAIT_FOREVER = -1,   /**< 阻止而不安装有限超时。 */
 };
 
 }

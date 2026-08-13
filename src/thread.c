@@ -37,6 +37,21 @@
  *                             fix rt_thread_delay
  */
 
+/**
+ * @file thread.c
+ * @brief 线程生命周期、栈初始化、睡眠、挂起/恢复和通用控制 API。
+ *
+ * 初学者可按下面的状态链理解本文件：rt_thread_init/create 建立 INIT 线程和初始栈；
+ * rt_thread_startup 计算调度属性并借 resume 路径进入 READY；调度器选中后为 RUNNING；
+ * 延时或等待 IPC 时从就绪/运行集合移出成为不同类型的 SUSPEND；超时、资源到达或
+ * resume 又使它 READY；入口函数返回后自动进入 _thread_exit，最终标记 CLOSE 并放入
+ * defunct 队列，由安全的后台上下文释放栈和控制块。
+ *
+ * 线程内置 thread_timer 被所有有超时的阻塞操作复用。挂起链表、定时器和线程状态
+ * 必须在同一个调度锁事务中变化，否则“资源唤醒”和“超时 ISR”可能重复恢复线程。
+ * UP/SMP 的队列实现不同，但本文件通过 rtsched 公共接口保持相同生命周期语义。
+ */
+
 #include <rthw.h>
 #include <rtthread.h>
 #include <stddef.h>
@@ -50,11 +65,13 @@ static void (*rt_thread_suspend_hook)(rt_thread_t thread);
 static void (*rt_thread_resume_hook) (rt_thread_t thread);
 
 /**
- * @brief   This function sets a hook function when the system suspend a thread.
+ * @brief 设置线程成功进入挂起态后的钩子。
  *
- * @note    The hook function must be simple and never be blocked or suspend.
+ * 钩子在 rt_thread_suspend_to_list() 已完成状态/等待链/定时器更新并释放调度锁后调用。
+ * 调用者上下文可能是线程或内核路径；钩子必须短小、不可阻塞，也不要递归改变同一
+ * 线程状态。再次设置会覆盖，RT_NULL 取消。
  *
- * @param   hook is the specified hook function.
+ * @param hook 接收被挂起线程的回调。
  */
 void rt_thread_suspend_sethook(void (*hook)(rt_thread_t thread))
 {
@@ -62,17 +79,23 @@ void rt_thread_suspend_sethook(void (*hook)(rt_thread_t thread))
 }
 
 /**
- * @brief   This function sets a hook function when the system resume a thread.
+ * @brief 设置一次线程恢复尝试结束后的钩子。
  *
- * @note    The hook function must be simple and never be blocked or suspend.
+ * 钩子在 rt_thread_resume() 的调度锁处理完成后调用，并接收目标线程。当前代码即使
+ * ready 操作返回错误也会触发该钩子，所以跟踪者不能仅凭钩子调用推断恢复成功。
+ * 钩子必须短小、不可阻塞；RT_NULL 取消。
  *
- * @param   hook is the specified hook function.
+ * @param hook 接收目标线程的回调。
  */
 void rt_thread_resume_sethook(void (*hook)(rt_thread_t thread))
 {
     rt_thread_resume_hook = hook;
 }
 
+/*
+ * 线程初始化钩子使用可挂多个节点的 hook-list 机制，而非单函数指针。它在
+ * _thread_init() 最后、线程仍为 INIT 且尚未进入就绪队列时依次调用所有节点。
+ */
 RT_OBJECT_HOOKLIST_DEFINE(rt_thread_inited);
 #endif /* defined(RT_USING_HOOK) && defined(RT_HOOK_USING_FUNC_PTR) */
 
@@ -86,22 +109,25 @@ static void _thread_detach_from_mutex(rt_thread_t thread)
 
     level = rt_spin_lock_irqsave(&thread->spinlock);
 
-    /* check if thread is waiting on a mutex */
+    /* 若线程正排在某互斥量等待队列，先撤销等待及其优先级继承关系。 */
     if ((thread->pending_object) &&
         (rt_object_get_type(thread->pending_object) == RT_Object_Class_Mutex))
     {
-        /* remove it from its waiting list */
+        /* drop_thread 负责从互斥量等待结构摘除该线程。 */
         struct rt_mutex *mutex = (struct rt_mutex*)thread->pending_object;
         rt_mutex_drop_thread(mutex, thread);
         thread->pending_object = RT_NULL;
     }
 
-    /* free taken mutex after detaching from waiting, so we don't lost mutex just got */
+    /*
+     * 再逐一释放线程仍持有的互斥量。必须先取消“正在等待”的关系，以免退出线程在
+     * 竞态中刚获得某个锁却遗漏释放。safe 遍历允许 release 修改 taken_object_list。
+     */
     rt_list_for_each_safe(node, tmp_list, &(thread->taken_object_list))
     {
         mutex = rt_list_entry(node, struct rt_mutex, taken_list);
         LOG_D("Thread [%s] exits while holding mutex [%s].\n", thread->parent.name, mutex->parent.parent.name);
-        /* recursively take */
+        /* 把递归持有层数归一为 1，使一次 release 完成所有权转移。 */
         mutex->hold = 1;
         rt_mutex_release(mutex);
     }
@@ -119,7 +145,7 @@ static void _thread_exit(void)
     struct rt_thread *thread;
     rt_base_t critical_level;
 
-    /* get current thread */
+    /* 线程入口函数返回时由初始栈帧自动跳转到这里。 */
     thread = rt_thread_self();
 
     critical_level = rt_enter_critical();
@@ -128,20 +154,23 @@ static void _thread_exit(void)
 
     _thread_detach_from_mutex(thread);
 
-    /* insert to defunct thread list */
+    /* 当前仍使用自己的栈，不能立即释放，只能交给后台回收。 */
     rt_thread_defunct_enqueue(thread);
 
     rt_exit_critical_safe(critical_level);
 
-    /* switch to next task */
+    /* CLOSE 线程不会再次运行，切换到其他就绪线程。 */
     rt_schedule();
 }
 
 /**
- * @brief   This function is the timeout function for thread, normally which is invoked
- *          when thread is timeout to wait some resource.
+ * @brief 线程阻塞等待到期时由其内置定时器调用的统一超时回调。
  *
- * @param   parameter is the parameter of thread timeout function
+ * 在调度锁内断言目标仍挂起，写入 -RT_ETIMEOUT，从等待链表摘除并插入就绪队列，
+ * 最后解锁并请求调度。状态、链表和调度请求是同一事务，避免与资源唤醒重复操作。
+ * 该回调通常运行于硬定时器 ISR 或软定时器线程，具体取决于定时器配置。
+ *
+ * @param parameter 创建线程定时器时保存的目标 rt_thread 指针。
  */
 static void _thread_timeout(void *parameter)
 {
@@ -150,29 +179,51 @@ static void _thread_timeout(void *parameter)
 
     thread = (struct rt_thread *)parameter;
 
-    /* parameter check */
+    /* 定时器参数必须仍指向有效线程对象。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
 
     rt_sched_lock(&slvl);
 
     /**
-     * resume of the thread and stop of the thread timer should be an atomic
-     * operation. So we don't expected that thread had resumed.
+     * 恢复线程与停止其超时定时器必须是原子竞争。回调已经获胜时，线程理应仍挂起；
+     * 若已恢复说明唤醒路径没有正确停止定时器。
      */
     RT_ASSERT(rt_sched_thread_is_suspended(thread));
 
-    /* set error number */
+    /* 阻塞 API 在重新运行后据此区分超时与正常资源唤醒。 */
     thread->error = -RT_ETIMEOUT;
 
-    /* remove from suspend list */
+    /* 同一个调度 list 节点从等待链摘下后才能复用于就绪链。 */
     rt_list_remove(&RT_THREAD_LIST_NODE(thread));
-    /* insert to schedule ready list */
+    /* 目标现在可再次被调度。 */
     rt_sched_insert_thread(thread);
-    /* do schedule and release the scheduler lock */
+    /* 若目标优先级更高，安全时机立即抢占。 */
     rt_sched_unlock_n_resched(slvl);
 }
 
+/**
+ * @brief 初始化静态/动态线程共同拥有的全部运行时字段。
+ *
+ * 调用者已经完成对象层面的 init/allocate，本函数只建立线程语义：
+ * - 调度上下文保存状态、基础/有效优先级和初始/剩余时间片；
+ * - entry/parameter 决定第一次恢复后的 C 入口；stack_addr/stack_size 描述栈所有区；
+ * - sp 指向 rt_hw_stack_init() 构造的初始寄存器帧，入口返回地址指向 _thread_exit；
+ * - thread_timer 是各类延时和带超时等待共用的一次性定时器；
+ * - taken_object_list/pending_object 分别跟踪已持有与正在等待的互斥量；
+ * - cleanup/user_data、信号、Smart/LWP、pthread、module 和 CPU 统计字段按配置清零；
+ * - spinlock 最后初始化，再调用线程 initialized hook-list。
+ *
+ * @param thread 已注册为 Thread 类型且内存有效的控制块。
+ * @param name 对象名已由上层保存；此处仅保留统一内部签名。
+ * @param entry 线程入口函数。
+ * @param parameter 入口参数。
+ * @param stack_start 连续栈内存起点。
+ * @param stack_size 栈字节数。
+ * @param priority 初始优先级。
+ * @param tick 同优先级轮转时间片。
+ * @return 成功返回 RT_EOK。
+ */
 static rt_err_t _thread_init(struct rt_thread *thread,
                              const char       *name,
                              void (*entry)(void *parameter),
@@ -197,11 +248,15 @@ static rt_err_t _thread_init(struct rt_thread *thread,
     thread->entry = (void *)entry;
     thread->parameter = parameter;
 
-    /* stack init */
+    /* 记录调用者提供或动态分配的连续栈区。 */
     thread->stack_addr = stack_start;
     thread->stack_size = stack_size;
 
-    /* init thread stack */
+    /*
+     * 整栈填充 '#' 既便于统计高水位，也让软件栈溢出检查能检测边界哨兵。随后由架构
+     * 构造初始寄存器帧：第一次恢复时从 entry(parameter) 开始，entry 返回则自动
+     * 转到 _thread_exit，防止落入未知地址。
+     */
     rt_memset(thread->stack_addr, '#', thread->stack_size);
 #ifdef RT_USING_HW_STACK_GUARD
     rt_hw_stack_guard_init(thread);
@@ -226,19 +281,19 @@ static rt_err_t _thread_init(struct rt_thread *thread,
     thread->event_info = 0;
 #endif /* RT_USING_EVENT */
 
-    /* error and flags */
+    /* error 是阻塞 API 之间复用的每线程返回原因槽。 */
     thread->error = RT_EOK;
 
-    /* lock init */
+    /* SMP 全局 CPU 锁的每线程嵌套从 0 开始。 */
 #ifdef RT_USING_SMP
     rt_atomic_store(&thread->cpus_lock_nest, 0);
 #endif
 
-    /* initialize cleanup function and user data */
+    /* cleanup 在僵尸回收时调用；user_data 完全由用户扩展使用。 */
     thread->cleanup   = 0;
     thread->user_data = 0;
 
-    /* initialize thread timer */
+    /* 内置单次定时器统一服务延时和带超时 IPC 等待。 */
     rt_timer_init(&(thread->thread_timer),
                   thread->parent.name,
                   _thread_timeout,
@@ -246,7 +301,7 @@ static rt_err_t _thread_init(struct rt_thread *thread,
                   0,
                   RT_TIMER_FLAG_ONE_SHOT | RT_TIMER_FLAG_THREAD_TIMER);
 
-    /* initialize signal */
+    /* 信号位图、返回 SP、处理向量和详细信息链初始均为空。 */
 #ifdef RT_USING_SIGNALS
     thread->sig_mask    = 0x00;
     thread->sig_pending = 0x00;
@@ -265,14 +320,14 @@ static rt_err_t _thread_init(struct rt_thread *thread,
     thread->robust_list = RT_NULL;
     rt_list_init(&(thread->sibling));
 
-    /* lwp thread-signal init */
+    /* Smart/LWP 另有 POSIX 风格信号掩码与排队结构。 */
     rt_memset(&thread->signal.sigset_mask, 0, sizeof(lwp_sigset_t));
     rt_memset(&thread->signal.sig_queue.sigset_pending, 0, sizeof(lwp_sigset_t));
     rt_list_init(&thread->signal.sig_queue.siginfo_list);
 
     rt_memset(&thread->user_ctx, 0, sizeof thread->user_ctx);
 
-    /* initialize user_time and system_time */
+    /* CPU 使用统计从零开始累计。 */
     thread->user_time = 0;
     thread->system_time = 0;
 #endif
@@ -294,6 +349,10 @@ static rt_err_t _thread_init(struct rt_thread *thread,
 
     rt_spin_lock_init(&thread->spinlock);
 
+    /*
+     * 初始化钩子链在所有字段和锁均可用后触发。回调运行在创建者上下文，可能持有
+     * 对象系统内部状态，必须短小且不可阻塞；它可观察完整但尚未 startup 的线程。
+     */
     RT_OBJECT_HOOKLIST_CALL(rt_thread_inited, (thread));
 
     return RT_EOK;
@@ -305,43 +364,29 @@ static rt_err_t _thread_init(struct rt_thread *thread,
  */
 
 /**
- * @brief   This function will initialize a thread. It's used to initialize a
- *          static thread object.
+ * @brief 使用用户提供的控制块和栈初始化一个静态线程对象。
  *
- * @param   thread Thread handle. Thread handle is provided by the user and
- *                 points to the corresponding thread control block memory address.
+ * 该函数清零整个控制块、把它作为静态 Thread 对象注册，再由 _thread_init() 建立
+ * 初始栈、调度字段、内置定时器及可选子系统字段。初始化后状态仍为 INIT，必须再
+ * 调用 rt_thread_startup() 才会进入就绪队列。控制块与栈的存储期必须覆盖线程生命
+ * 周期，内核不会在 detach 时释放它们。
  *
- * @param   name Name of the thread (shall be unique); the maximum length of the
- *               thread name is specified by the `RT_NAME_MAX` macro defined in
- *               `rtconfig.h`, and the extra part is automatically truncated.
+ * @param thread 用户提供的 struct rt_thread 内存。
  *
- * @param   entry Entry function of thread.
+ * @param name 线程名，长度受 `RT_NAME_MAX` 限制，超出部分截断。
  *
- * @param   parameter Parameter of thread entry function.
+ * @param entry 第一次运行时调用的线程入口。
  *
- * @param   stack_start Start address of thread stack.
+ * @param parameter 原样传给 @p entry 的参数。
  *
- * @param   stack_size Size of thread stack in bytes. Stack space address
- *                     alignment is required in most systems (for example,
- *                     alignment to 4-byte addresses in the ARM architecture).
+ * @param stack_start 用户提供的栈区起始地址，须满足架构对齐要求。
  *
- * @param   priority Priority of thread. The priority range is based on the
- *                   system configuration (macro definition `RT_THREAD_PRIORITY_MAX`
- *                   in `rtconfig.h`). If 256 levels of priority are supported,
- *                   the range is from 0 to 255. The smaller the value, the
- *                   higher the priority, and 0 is the highest priority.
+ * @param stack_size 栈区字节数。
  *
- * @param   tick Time slice if there are same priority thread. The unit of the
- *               time slice (tick) is the tick of the operating system. When
- *               there are threads with the same priority in the system, this
- *               parameter specifies the maximum length of time of a thread for
- *               one schedule. At the end of this time slice run, the scheduler
- *               automatically selects the next ready state of the same priority
- *               thread to run.
+ * @param priority 调度优先级，范围 [0, RT_THREAD_PRIORITY_MAX)，数值越小越高。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param tick 同优先级轮转的时间片节拍数，必须非 0。
+ * @return 成功返回 `RT_EOK`。
  */
 rt_err_t rt_thread_init(struct rt_thread *thread,
                         const char       *name,
@@ -352,15 +397,15 @@ rt_err_t rt_thread_init(struct rt_thread *thread,
                         rt_uint8_t        priority,
                         rt_uint32_t       tick)
 {
-    /* parameter check */
+    /* 控制块、栈和非零时间片是建立可运行现场的最低条件。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(stack_start != RT_NULL);
     RT_ASSERT(tick != 0);
 
-    /* clean memory data of thread */
+    /* 清除调用者内存中的旧字段，避免残留链表/标志污染新对象。 */
     rt_memset(thread, 0x0, sizeof(struct rt_thread));
 
-    /* initialize thread object */
+    /* 静态对象只注册，不取得控制块内存所有权。 */
     rt_object_init((rt_object_t)thread, RT_Object_Class_Thread, name);
 
     return _thread_init(thread,
@@ -375,10 +420,12 @@ rt_err_t rt_thread_init(struct rt_thread *thread,
 RTM_EXPORT(rt_thread_init);
 
 /**
- * @brief   This function will return self thread object.
+ * @brief 返回当前 CPU 正在运行的线程对象。
  *
- * @return  The self thread object. If returns `RT_NULL`, it means that the
- *          scheduler has not started yet.
+ * UP 直接读取唯一 CPU 控制块；SMP 若有硬件 current-thread 寄存器则直接读取，否则
+ * 短暂关闭本地中断，防止 current_thread 在读取途中因调度改变。
+ *
+ * @return 当前线程；首次调度尚未建立时返回 `RT_NULL`。
  */
 rt_thread_t rt_thread_self(void)
 {
@@ -402,17 +449,18 @@ rt_thread_t rt_thread_self(void)
 RTM_EXPORT(rt_thread_self);
 
 /**
- * @brief   This function will start a thread and put it to system ready queue.
+ * @brief 首次启动 INIT 线程并将其加入系统就绪队列。
  *
- * @param   thread Handle of the thread to be started.
+ * startup 先计算优先级位图属性并临时置 SUSPEND，再复用 rt_thread_resume() 完成
+ * “停止超时源、入就绪队列、必要时抢占”的统一路径。线程只能 startup 一次；已经
+ * 运行或关闭的线程不能用本 API 重启。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param thread 状态必须为 INIT 的有效线程。
+ * @return 成功返回 `RT_EOK`，否则返回恢复/调度路径错误。
  */
 rt_err_t rt_thread_startup(rt_thread_t thread)
 {
-    /* parameter check */
+    /* 状态断言防止同一调度节点重复入队。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT((RT_SCHED_CTX(thread).stat & RT_THREAD_STAT_MASK) == RT_THREAD_INIT);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
@@ -420,10 +468,10 @@ rt_err_t rt_thread_startup(rt_thread_t thread)
     LOG_D("startup a thread:%s with priority:%d",
           thread->parent.name, RT_SCHED_PRIV(thread).current_priority);
 
-    /* calculate priority attribute and reset thread stat to suspend */
+    /* 生成就绪位图掩码，并准备走首次 resume。 */
     rt_sched_thread_startup(thread);
 
-    /* resume and do a schedule if scheduler is available */
+    /* 若调度器已运行且新线程优先级更高，调用中可能立即发生抢占。 */
     rt_thread_resume(thread);
 
     return RT_EOK;
@@ -431,45 +479,44 @@ rt_err_t rt_thread_startup(rt_thread_t thread)
 RTM_EXPORT(rt_thread_startup);
 
 /**
- * @brief   This function will close a thread. The thread object will be removed from
- *          thread queue and detached/deleted from the system object management.
- *          It's different from rt_thread_delete or rt_thread_detach that this will not enqueue
- *          the closing thread to cleanup queue.
+ * @brief 从调度系统关闭线程，但不把它加入僵尸回收队列。
  *
- * @param   thread is the thread to be closed.
+ * 在调度锁内，如果线程不是 INIT，则从当前调度/等待节点移除；随后分离内置定时器并
+ * 把状态改为 CLOSE。它不释放互斥量、不调用 cleanup、不删除对象/栈，完整生命周期
+ * 结束通常应走 detach/delete 或当前线程的 _thread_exit。
  *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param thread 要关闭的线程。关闭当前线程前必须已进入禁止调度临界区。
+ * @return 成功或已经关闭均返回 RT_EOK。
  */
 rt_err_t rt_thread_close(rt_thread_t thread)
 {
     rt_sched_lock_level_t slvl;
     rt_uint8_t thread_status;
 
-    /* forbid scheduling on current core if closing current thread */
+    /* 防止当前线程在自身调度节点被移除到切换前继续被抢占。 */
     RT_ASSERT(thread != rt_thread_self() || rt_critical_level());
 
-    /* before checking status of scheduler */
+    /* 状态检查和队列/定时器修改必须相对于唤醒与超时原子。 */
     rt_sched_lock(&slvl);
 
-    /* check if thread is already closed */
+    /* 已关闭路径保持幂等，不重复分离定时器。 */
     thread_status = rt_sched_thread_get_stat(thread);
     if (thread_status != RT_THREAD_CLOSE)
     {
         if (thread_status != RT_THREAD_INIT)
         {
-            /* remove from schedule */
+            /* INIT 尚未入队，其他活动状态先摘除调度节点。 */
             rt_sched_remove_thread(thread);
         }
 
-        /* release thread timer */
+        /* 内置定时器对象不再参与任何超时。 */
         rt_timer_detach(&(thread->thread_timer));
 
-        /* change stat */
+        /* CLOSE 是不可再次 startup/resume 的终态。 */
         rt_sched_thread_close(thread);
     }
 
-    /* scheduler works are done */
+    /* 这里只解锁，不自行释放对象内存。 */
     rt_sched_unlock(slvl);
 
     return RT_EOK;
@@ -479,19 +526,18 @@ RTM_EXPORT(rt_thread_close);
 static rt_err_t _thread_detach(rt_thread_t thread);
 
 /**
- * @brief   This function will detach a thread. The thread object will be removed from
- *          thread queue and detached/deleted from the system object management.
+ * @brief 结束一个由 rt_thread_init() 创建的静态线程。
  *
- * @param   thread Handle of the thread to be deleted. The thread must be
- *                 initialized by `rt_thread_init()`.
+ * 该入口验证对象确为静态系统对象，然后关闭线程、解除互斥量关系并放入 defunct
+ * 队列。后台回收会从对象系统 detach 并调用 cleanup，但不会释放用户提供的控制块
+ * 和栈。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param thread 由 `rt_thread_init()` 初始化的线程。
+ * @return 返回关闭操作状态。
  */
 rt_err_t rt_thread_detach(rt_thread_t thread)
 {
-    /* parameter check */
+    /* 类型与静态对象断言防止误用动态删除语义。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread));
@@ -506,8 +552,8 @@ static rt_err_t _thread_detach(rt_thread_t thread)
     rt_base_t critical_level;
 
     /**
-     * forbid scheduling on current core before returning since current thread
-     * may be detached from scheduler.
+     * 若目标就是当前线程，从关闭到放入僵尸队列之间不能被普通调度切走；否则会留下
+     * 半结束状态。临界区退出后再由调用路径安排调度。
      */
     critical_level = rt_enter_critical();
 
@@ -515,7 +561,7 @@ static rt_err_t _thread_detach(rt_thread_t thread)
 
     _thread_detach_from_mutex(thread);
 
-    /* insert to defunct thread list */
+    /* 延迟到不使用目标栈的安全上下文执行对象分离和 cleanup。 */
     rt_thread_defunct_enqueue(thread);
 
     rt_exit_critical_safe(critical_level);
@@ -524,35 +570,24 @@ static rt_err_t _thread_detach(rt_thread_t thread)
 
 #ifdef RT_USING_HEAP
 /**
- * @brief   This function will create a thread object and allocate thread object memory.
- *          and stack.
+ * @brief 动态分配线程控制块和栈，并初始化为 INIT 线程。
  *
- * @param   name The name of the thread (shall be unique.); the maximum length of
- *               the thread name is specified by macro `RT_NAME_MAX` in `rtconfig.h`,
- *               and the extra part is automatically truncated.
+ * 先通过对象系统分配动态 Thread 对象，再从内核堆分配栈。第二步失败会回滚删除对象。
+ * 成功后调用与静态线程相同的 _thread_init()，但仍需调用 rt_thread_startup() 才运行。
+ * 日后 rt_thread_delete() 或入口返回后的僵尸回收会释放栈和对象。
  *
- * @param   entry Entry function of thread.
+ * @param name 线程名，超过 `RT_NAME_MAX` 的部分截断。
  *
- * @param   parameter Parameter of thread entry function.
+ * @param entry 线程入口。
  *
- * @param   stack_size Size of thread stack in bytes.
+ * @param parameter 入口参数。
  *
- * @param   priority Priority of thread. The priority range is based on the
- *                   system configuration (macro definition `RT_THREAD_PRIORITY_MAX`
- *                   in rtconfig.h). If 256-level priority is supported, then
- *                   the range is from 0 to 255. The smaller the value, the
- *                   higher the priority, and 0 is the highest priority.
+ * @param stack_size 动态栈字节数。
  *
- * @param   tick Time slice if there are same priority thread. The unit of the
- *               time slice (tick) is the tick of the operating system. When
- *               there are threads with the same priority in the system, this
- *               parameter specifies the maximum length of time of a thread for
- *               one schedule. At the end of this time slice run, the scheduler
- *               automatically selects the next ready state of the same priority
- *               thread to run.
+ * @param priority 优先级，数值越小越高。
  *
- * @return  If the return value is a `rt_thread` structure pointer, the function is successfully executed.
- *          If the return value is `RT_NULL`, it means this operation failed.
+ * @param tick 同优先级时间片，必须非 0。
+ * @return 成功返回新线程；对象或栈分配失败返回 `RT_NULL`。
  */
 rt_thread_t rt_thread_create(const char *name,
                              void (*entry)(void *parameter),
@@ -561,7 +596,7 @@ rt_thread_t rt_thread_create(const char *name,
                              rt_uint8_t  priority,
                              rt_uint32_t tick)
 {
-    /* parameter check */
+    /* 零时间片无法正确轮转。 */
     RT_ASSERT(tick != 0);
 
     struct rt_thread *thread;
@@ -575,7 +610,7 @@ rt_thread_t rt_thread_create(const char *name,
     stack_start = (void *)RT_KERNEL_MALLOC(stack_size);
     if (stack_start == RT_NULL)
     {
-        /* allocate stack failure */
+        /* 栈分配失败时回滚刚创建的动态对象，避免泄漏。 */
         rt_object_delete((rt_object_t)thread);
 
         return RT_NULL;
@@ -595,18 +630,17 @@ rt_thread_t rt_thread_create(const char *name,
 RTM_EXPORT(rt_thread_create);
 
 /**
- * @brief   This function will delete a thread. The thread object will be removed from
- *          thread queue and deleted from system object management in the idle thread.
+ * @brief 结束由 rt_thread_create() 创建的动态线程并安排延迟释放。
  *
- * @param   thread Handle of the thread to be deleted.
+ * 验证对象不是静态系统对象后，复用 _thread_detach() 完成关闭、互斥量清理和僵尸
+ * 入队。后台回收最终释放动态栈和线程控制块。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param thread 动态线程句柄。
+ * @return 返回关闭操作状态。
  */
 rt_err_t rt_thread_delete(rt_thread_t thread)
 {
-    /* parameter check */
+    /* 静态线程必须使用 detach，避免错误释放用户内存。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
     RT_ASSERT(rt_object_is_systemobject((rt_object_t)thread) == RT_FALSE);
@@ -617,12 +651,12 @@ RTM_EXPORT(rt_thread_delete);
 #endif /* RT_USING_HEAP */
 
 /**
- * @brief   This function will let current thread yield processor, and scheduler will
- *          choose the highest thread to run. After yield processor, the current thread
- *          is still in READY state.
+ * @brief 当前线程主动让出本轮 CPU 使用机会。
  *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * 在调度锁内重装时间片并设置 YIELD，随后解锁并重新调度。当前线程并非睡眠；若没有
+ * 同级或更高优先级候选，它仍可能马上继续运行。
+ *
+ * @return 始终返回 RT_EOK。
  */
 rt_err_t rt_thread_yield(void)
 {
@@ -638,13 +672,14 @@ rt_err_t rt_thread_yield(void)
 RTM_EXPORT(rt_thread_yield);
 
 /**
- * @brief   This function will let current thread sleep for some ticks. Change current thread state to suspend,
- *          when the thread timer reaches the tick value, scheduler will awaken this thread.
+ * @brief 当前线程睡眠指定节拍数的内部实现。
  *
- * @param   tick is the sleep ticks.
+ * 进入可中断挂起态，重设并启动线程内置定时器，然后请求调度。先设置 error 为
+ * -RT_EINTR，使信号等提前唤醒能保留中断原因；正常定时到期由 _thread_timeout 写成
+ * -RT_ETIMEOUT，恢复后再转换为 RT_EOK。tick 为 0 不等同 yield，而是无效参数。
  *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param tick 睡眠节拍，必须非 0。
+ * @return 返回挂起操作状态。
  */
 static rt_err_t _thread_sleep(rt_tick_t tick)
 {
@@ -657,24 +692,24 @@ static rt_err_t _thread_sleep(rt_tick_t tick)
         return -RT_EINVAL;
     }
 
-    /* set to current thread */
+    /* 睡眠只能作用于调用者自身。 */
     thread = rt_thread_self();
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
 
-    /* current context checking */
+    /* 必须已在线程上下文且调度器可用。 */
     RT_DEBUG_SCHEDULER_AVAILABLE(RT_TRUE);
 
-    /* reset thread error */
+    /* 清理上一轮阻塞留下的返回原因。 */
     thread->error = RT_EOK;
 
-    /* lock scheduler since current thread may be suspended */
+    /* 从 RUNNING 到挂起并启动超时源期间禁止调度穿插。 */
     critical_level = rt_enter_critical();
 
-    /* suspend thread */
+    /* 可中断睡眠允许信号提前唤醒。 */
     err = rt_thread_suspend_with_flag(thread, RT_INTERRUPTIBLE);
 
-    /* reset the timeout of thread timer and start it */
+    /* 只有成功挂起才配置这次睡眠的超时源。 */
     if (err == RT_EOK)
     {
         rt_timer_control(&(thread->thread_timer), RT_TIMER_CTRL_SET_TIME, &tick);
@@ -682,13 +717,13 @@ static rt_err_t _thread_sleep(rt_tick_t tick)
 
         thread->error = -RT_EINTR;
 
-        /* notify a pending rescheduling */
+        /* 当前线程已不可运行，登记切换请求。 */
         rt_schedule();
 
-        /* exit critical and do a rescheduling */
+        /* 最外层退出时真正切走；日后唤醒后从此调用返回。 */
         rt_exit_critical_safe(critical_level);
 
-        /* clear error number of this thread to RT_EOK */
+        /* 定时到期是 sleep 的正常完成，不向调用者报告超时错误。 */
         if (thread->error == -RT_ETIMEOUT)
             thread->error = RT_EOK;
     }
@@ -701,13 +736,11 @@ static rt_err_t _thread_sleep(rt_tick_t tick)
 }
 
 /**
- * @brief   This function will let current thread delay for some ticks.
+ * @brief 让当前线程延时指定操作系统节拍。
  *
- * @param   tick The delay ticks, in units of 1 OS Tick.
+ * @param tick 延时 tick 数；0 返回 -RT_EINVAL。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @return 正常到期为 RT_EOK，否则返回挂起错误。
  */
 rt_err_t rt_thread_delay(rt_tick_t tick)
 {
@@ -716,14 +749,16 @@ rt_err_t rt_thread_delay(rt_tick_t tick)
 RTM_EXPORT(rt_thread_delay);
 
 /**
- * @brief   This function will let current thread delay until (*tick + inc_tick).
+ * @brief 按绝对周期基准延时到 `*tick + inc_tick`。
  *
- * @param   tick is the tick of last wakeup.
+ * 与相对 delay 不同，它用上次计划唤醒点累加周期，可避免循环体执行时间逐周期累积
+ * 成漂移。若当前仍早于目标，计算 left_tick、不可中断挂起并启动定时器；若已经错过
+ * 本周期，则不睡眠，把基准重置为当前 tick。无符号减法使一次自然 tick 回绕可工作。
  *
- * @param   inc_tick is the increment tick.
+ * @param tick 输入/输出的上次周期基准。
  *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param inc_tick 周期间隔节拍。
+ * @return 正常到期为 RT_EOK；否则返回线程 error。
  */
 rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
 {
@@ -733,15 +768,15 @@ rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
 
     RT_ASSERT(tick != RT_NULL);
 
-    /* set to current thread */
+    /* 绝对延时同样只操作当前线程。 */
     thread = rt_thread_self();
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
 
-    /* reset thread error */
+    /* 清除前一次等待结果。 */
     thread->error = RT_EOK;
 
-    /* disable interrupt */
+    /* 稳定“读当前 tick -> 挂起 -> 启动定时器”的决策窗口。 */
     critical_level = rt_enter_critical();
 
     cur_tick = rt_tick_get();
@@ -752,10 +787,10 @@ rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
         *tick += inc_tick;
         left_tick = *tick - cur_tick;
 
-        /* suspend thread */
+        /* 周期延时不可被普通信号语义中断。 */
         rt_thread_suspend_with_flag(thread, RT_UNINTERRUPTIBLE);
 
-        /* reset the timeout of thread timer and start it */
+        /* 只等待距离绝对目标剩余的节拍。 */
         rt_timer_control(&(thread->thread_timer), RT_TIMER_CTRL_SET_TIME, &left_tick);
         rt_timer_start(&(thread->thread_timer));
 
@@ -763,7 +798,7 @@ rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
 
         rt_schedule();
 
-        /* clear error number of this thread to RT_EOK */
+        /* 到达计划唤醒点是正常成功。 */
         if (thread->error == -RT_ETIMEOUT)
         {
             thread->error = RT_EOK;
@@ -780,13 +815,13 @@ rt_err_t rt_thread_delay_until(rt_tick_t *tick, rt_tick_t inc_tick)
 RTM_EXPORT(rt_thread_delay_until);
 
 /**
- * @brief   This function will let current thread delay for some milliseconds.
+ * @brief 以毫秒为单位让当前线程延时。
  *
- * @param   ms The delay time in units of 1ms.
+ * 先用 rt_tick_from_millisecond() 按系统节拍频率向上换算，再复用 _thread_sleep()。
+ * 因此实际精度受 tick 周期限制，且 0 毫秒最终作为无效零 tick 处理。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param ms 延时毫秒数。
+ * @return 正常到期为 RT_EOK，否则返回换算后睡眠路径错误。
  */
 rt_err_t rt_thread_mdelay(rt_int32_t ms)
 {
@@ -802,28 +837,24 @@ RTM_EXPORT(rt_thread_mdelay);
 #endif
 
 /**
- * @brief   This function will control thread behaviors according to control command.
+ * @brief 根据控制命令执行线程通用操作。
  *
- * @param   thread Handle of the thread to be controlled.
+ * CHANGE_PRIORITY 仅改变当前有效优先级，RESET_PRIORITY 同时改变基础值；STARTUP
+ * 转调首次启动；CLOSE 根据静态/动态对象选择 detach/delete 并主动调度；BIND_CPU
+ * 将 arg 的整数值作为 CPU 编号交给 SMP 调度器。优先级命令中的 arg 必须指向
+ * rt_uint8_t，而 BIND_CPU 采用“整数经 void * 传递”的历史约定。
  *
- * @param   cmd Control command, which includes.
- *              - `RT_THREAD_CTRL_CHANGE_PRIORITY` for changing priority level of thread.
- *              - `RT_THREAD_CTRL_STARTUP` for starting a thread, equivalent to
- *                the `rt_thread_startup()` function call.
- *              - `RT_THREAD_CTRL_CLOSE` for closing a thread, equivalent to the
- *                `rt_thread_delete()` function call.
- *              - `RT_THREAD_CTRL_BIND_CPU` for bind the thread to a CPU.
- *              - `RT_THREAD_CTRL_RESET_PRIORITY` for reset priority level of thread.
+ * @param thread 目标线程。
  *
- * @param   arg Argument of control command.
+ * @param cmd `RT_THREAD_CTRL_CHANGE_PRIORITY`、`RESET_PRIORITY`、`STARTUP`、`CLOSE`
+ *            或 `BIND_CPU`。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param arg 命令相关参数。
+ * @return 已识别命令返回对应 API 状态；未知命令当前返回 RT_EOK。
  */
 rt_err_t rt_thread_control(rt_thread_t thread, int cmd, void *arg)
 {
-    /* parameter check */
+    /* 控制接口只接受仍注册为 Thread 类型的对象。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
 
@@ -892,7 +923,7 @@ RTM_EXPORT(rt_thread_control);
 #include <lwp_signal.h>
 #endif
 
-/* Convert suspend_flag to corresponding thread suspend state value */
+/* 将 API 的可中断性标志转换为线程 stat 中具体的挂起基本状态。 */
 static rt_uint8_t _thread_get_suspend_state(int suspend_flag)
 {
     switch (suspend_flag)
@@ -917,37 +948,30 @@ static void _thread_set_suspend_state(struct rt_thread *thread, int suspend_flag
 }
 
 /**
- * @brief   This function will suspend the specified thread and change it to suspend state.
+ * @brief 把线程挂入指定等待链表并设置相应挂起状态。
  *
- * @note    This function ONLY can suspend current thread itself.
- *              rt_thread_suspend(rt_thread_self());
+ * 这是 IPC 与延时路径的核心状态转换。调度锁内先处理“已经挂起”的幂等/升级情况；
+ * 对 READY/RUNNING 线程做 Smart 信号检查，再从调度集合移除、设置可中断/可杀死/
+ * 不可中断状态，并在同一临界区加入等待链，以免错过异步通知。最后停止旧线程超时
+ * 定时器，解锁后调用 suspend hook。
  *
- *          Do not use the rt_thread_suspend to suspend other threads. You have no way of knowing what code a
- *          thread is executing when you suspend it. If you suspend a thread while sharing a resouce with
- *          other threads and occupying this resouce, starvation can occur very easily.
+ * RUNNING 线程只能挂起自己；强制挂起其他正在运行的线程无法知道其是否持锁，会
+ * 导致死锁或资源饥饿。READY 线程虽可被操作，也需要上层完整掌握生命周期。
  *
- * @param   thread the thread to be suspended.
- * @param   susp_list the list thread enqueued to. RT_NULL if no list.
- * @param   ipc_flags is a flag for the thread object to be suspended. It determines how the thread is suspended.
- *          The flag can be ONE of the following values:
- *              RT_IPC_FLAG_PRIO          The pending threads will queue in order of priority.
- *              RT_IPC_FLAG_FIFO          The pending threads will queue in the first-in-first-out method
- *                                         (also known as first-come-first-served (FCFS) scheduling strategy).
- *          NOTE: RT_IPC_FLAG_FIFO is a non-real-time scheduling mode. It is strongly recommended to use
- *          RT_IPC_FLAG_PRIO to ensure the thread is real-time UNLESS your applications concern about
- *          the first-in-first-out principle, and you clearly understand that all threads involved in
- *          this semaphore will become non-real-time threads.
- * @param   suspend_flag status flag of the thread to be suspended.
+ * @param thread 要挂起的线程。
+ * @param susp_list IPC/等待对象的挂起链表；RT_NULL 表示只改变线程状态。
+ * @param ipc_flags `RT_IPC_FLAG_PRIO` 按优先级排队，`RT_IPC_FLAG_FIFO` 按到达顺序。
+ *                  FIFO 不保证高优先级等待者先获得资源，应理解其实时性影响。
+ * @param suspend_flag `RT_INTERRUPTIBLE`、`RT_KILLABLE` 或 `RT_UNINTERRUPTIBLE`。
  *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @return 成功为 RT_EOK；状态非法为 -RT_ERROR；Smart 信号阻止挂起为 -RT_EINTR。
  */
 rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int ipc_flags, int suspend_flag)
 {
     rt_base_t stat;
     rt_sched_lock_level_t slvl;
 
-    /* parameter check */
+    /* 空闲线程是每 CPU 最后兜底，绝不能被挂起。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
     RT_ASSERT(!rt_thread_is_idle_thread(thread));
@@ -961,17 +985,17 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
     {
         if (RT_SCHED_CTX(thread).sched_flag_ttmr_set == 1)
         {
-            /* The new suspend operation will halt the tick timer. */
+            /* 新的挂起请求终止旧等待关联的线程超时定时器。 */
             LOG_D("Thread [%s]'s timer has been halted.\n", thread->parent.name);
             rt_sched_thread_timer_stop(thread);
         }
-        /* Upgrade suspend state if new state is stricter */
+        /* 只允许把已有挂起升级到更严格状态，不反向放宽。 */
         if (stat < _thread_get_suspend_state(suspend_flag))
         {
             _thread_set_suspend_state(thread, suspend_flag);
         }
         rt_sched_unlock(slvl);
-        /* Already suspended, just set the status to success. */
+        /* 已挂起无需重复摘链/入链。 */
         return RT_EOK;
     }
     else if ((stat != RT_THREAD_READY) && (stat != RT_THREAD_RUNNING))
@@ -983,7 +1007,7 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
 
     if (stat == RT_THREAD_RUNNING)
     {
-        /* not suspend running status thread on other core */
+        /* 不能从本核安全移除另一 CPU 正在使用的运行栈。 */
         RT_ASSERT(thread == rt_thread_self());
     }
 
@@ -992,10 +1016,10 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
     {
         rt_sched_unlock(slvl);
 
-        /* check pending signals for thread before suspend */
+        /* Smart 信号可能要求此次可中断挂起立即失败。检查时不能持调度锁。 */
         if (lwp_thread_signal_suspend_check(thread, suspend_flag) == 0)
         {
-            /* not to suspend */
+            /* pending 信号赢得竞争，不进入挂起态。 */
             return -RT_EINTR;
         }
 
@@ -1006,7 +1030,7 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
 
             if (stat != RT_THREAD_READY)
             {
-                /* status updated while we check for signal */
+                /* 放锁检查信号期间状态被竞争者改变，放弃本次转换。 */
                 rt_sched_unlock(slvl);
                 return -RT_ERROR;
             }
@@ -1014,20 +1038,20 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
     }
 #endif
 
-    /* change thread stat */
+    /* 先从 RUNNING/READY 调度集合摘除，再赋挂起基本状态。 */
     rt_sched_remove_thread(thread);
     _thread_set_suspend_state(thread, suspend_flag);
 
     if (susp_list)
     {
         /**
-         * enqueue thread on the push list before leaving critical region of
-         * scheduler, so we won't miss notification of async events.
+         * 离开调度临界区前就加入等待链；否则资源在两步之间到达会找不到等待者，
+         * 造成永久睡眠的“丢失唤醒”。
          */
         rt_susp_list_enqueue(susp_list, thread, ipc_flags);
     }
 
-    /* stop thread timer anyway */
+    /* 清除线程此前任何等待留下的超时源，新的等待会由调用者重新设置。 */
     rt_sched_thread_timer_stop(thread);
 
     rt_sched_unlock(slvl);
@@ -1038,20 +1062,15 @@ rt_err_t rt_thread_suspend_to_list(rt_thread_t thread, rt_list_t *susp_list, int
 RTM_EXPORT(rt_thread_suspend_to_list);
 
 /**
- * @brief   This function will suspend the specified thread and change it to suspend state.
+ * @brief 不加入外部等待链，仅按指定类型挂起线程。
  *
- * @note    This function ONLY can suspend current thread itself.
- *              rt_thread_suspend(rt_thread_self());
+ * 这是 rt_thread_suspend_to_list(thread, RT_NULL, ...) 的便捷包装。通常仅让当前线程
+ * 自愿挂起；对其他线程使用仍有持锁与资源饥饿风险。
  *
- *          Do not use the rt_thread_suspend to suspend other threads. You have no way of knowing what code a
- *          thread is executing when you suspend it. If you suspend a thread while sharing a resouce with
- *          other threads and occupying this resouce, starvation can occur very easily.
+ * @param thread 要挂起的线程。
+ * @param suspend_flag 挂起可中断性类型。
  *
- * @param   thread the thread to be suspended.
- * @param   suspend_flag status flag of the thread to be suspended.
- *
- * @return  Return the operation status. If the return value is RT_EOK, the function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @return 转发核心挂起函数的状态。
  */
 rt_err_t rt_thread_suspend_with_flag(rt_thread_t thread, int suspend_flag)
 {
@@ -1060,36 +1079,16 @@ rt_err_t rt_thread_suspend_with_flag(rt_thread_t thread, int suspend_flag)
 RTM_EXPORT(rt_thread_suspend_with_flag);
 
 /**
- * @brief   This function will suspend the specified thread and change it to suspend state.
+ * @brief 以不可中断状态强制挂起指定线程。
  *
- * @note    This function can suspend both the current thread itself and other threads.
- *          Please use this API with extreme caution when suspending other threads.
+ * 挂起自己通常安全；挂起他人时无法知道它正执行到哪一步或是否持有互斥量、信号量
+ * 等资源。除非调用者对系统状态有完整控制，否则不应将它当作线程同步机制。
  *
- *          When suspending the current thread:
- *              rt_thread_suspend(rt_thread_self());
- *          This is generally safe as the thread voluntarily suspends itself.
+ * @warning 任意挂起其他线程可能造成死锁、资源饥饿、系统不稳定和不可预测行为。
  *
- *          When suspending other threads:
- *          You have no way of knowing what code another thread is executing when you suspend it.
- *          If you suspend a thread while it is sharing a resource with other threads and occupying
- *          this resource (such as holding a mutex, semaphore, or other synchronization objects),
- *          deadlock or resource starvation can occur very easily.
+ * @param thread 当前线程或受控的其他线程。
  *
- * @warning Suspending other threads arbitrarily can lead to:
- *          - Deadlock situations
- *          - Resource starvation
- *          - System instability
- *          - Unpredictable behavior
- *
- *          Only suspend other threads when you have full control over the system state
- *          and understand the implications.
- *
- * @param   thread Handle of the thread to be suspended. Can be the current thread
- *                 (rt_thread_self()) or any other thread.
- *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @return 转发不可中断挂起操作状态。
  */
 rt_err_t rt_thread_suspend(rt_thread_t thread)
 {
@@ -1098,20 +1097,22 @@ rt_err_t rt_thread_suspend(rt_thread_t thread)
 RTM_EXPORT(rt_thread_suspend);
 
 /**
- * @brief   This function will resume a thread and put it to system ready queue.
+ * @brief 把挂起线程恢复到系统就绪队列，并在需要时触发抢占。
  *
- * @param   thread Handle of the thread to be resumed.
+ * 调度锁内由 rt_sched_thread_ready() 与超时 ISR 竞争：成功停止线程定时器后，从等待
+ * 链摘除并入就绪队列。解锁调度返回 -RT_ESCHEDLOCKED 仅表示当前调用者仍处于外层
+ * 临界区、切换被延后，并不表示目标恢复失败，因此转换为 RT_EOK。最后无条件调用
+ * resume hook，观察者应结合返回值判断结果。
  *
- * @return  Return the operation status. If the return value is `RT_EOK`, the
- *          function is successfully executed.
- *          If the return value is any other values, it means this operation failed.
+ * @param thread 要恢复的挂起线程。
+ * @return 成功为 RT_EOK；非挂起或输掉超时竞争时返回相应错误。
  */
 rt_err_t rt_thread_resume(rt_thread_t thread)
 {
     rt_sched_lock_level_t slvl;
     rt_err_t error;
 
-    /* parameter check */
+    /* 目标必须仍是有效线程对象。 */
     RT_ASSERT(thread != RT_NULL);
     RT_ASSERT(rt_object_get_type((rt_object_t)thread) == RT_Object_Class_Thread);
 
@@ -1126,8 +1127,8 @@ rt_err_t rt_thread_resume(rt_thread_t thread)
         error = rt_sched_unlock_n_resched(slvl);
 
         /**
-         * RT_ESCHEDLOCKED indicates that the current thread is in a critical section,
-         * rather than 'thread' can't be resumed. Therefore, we can ignore this error.
+         * ESCHEDLOCKED 只说明调用线程仍锁住调度，目标已经成功 READY；实际切换将在
+         * 外层临界区退出后发生，因此对 resume 调用者按成功处理。
          */
         if (error == -RT_ESCHEDLOCKED)
         {
@@ -1147,11 +1148,13 @@ RTM_EXPORT(rt_thread_resume);
 
 #ifdef RT_USING_SMART
 /**
- * This function will wakeup a thread with customized operation.
+ * @brief 使用可选的自定义唤醒处理恢复 Smart 线程。
  *
- * @param thread the thread to be resumed
+ * 在调度锁内读取并清空一次性 wakeup_handle.func，随后锁外调用它；清空可避免回调
+ * 重入时被重复调用。不曾设置自定义回调则退回普通 rt_thread_resume()。
  *
- * @return the operation status, RT_EOK on OK, -RT_ERROR on error
+ * @param thread 要唤醒的线程。
+ * @return 自定义回调或 rt_thread_resume() 的状态。
  */
 rt_err_t rt_thread_wakeup(rt_thread_t thread)
 {
@@ -1179,6 +1182,16 @@ rt_err_t rt_thread_wakeup(rt_thread_t thread)
 }
 RTM_EXPORT(rt_thread_wakeup);
 
+/**
+ * @brief 为 Smart 线程登记一次性自定义唤醒函数及用户数据。
+ *
+ * 字段在调度锁内成对更新，下一次 rt_thread_wakeup() 会原子取走并清空 func，然后
+ * 在锁外调用。传入 RT_NULL 可恢复为普通 resume 行为；user_data 由回调解释。
+ *
+ * @param thread 目标线程。
+ * @param func 自定义唤醒回调。
+ * @param user_data 原样传给回调的上下文。
+ */
 void rt_thread_wakeup_set(struct rt_thread *thread, rt_wakeup_func_t func, void* user_data)
 {
     rt_sched_lock_level_t slvl;
@@ -1194,14 +1207,13 @@ void rt_thread_wakeup_set(struct rt_thread *thread, rt_wakeup_func_t func, void*
 RTM_EXPORT(rt_thread_wakeup_set);
 #endif
 /**
- * @brief   This function will find the specified thread.
+ * @brief 按对象名查找线程。
  *
- * @note    Please don't invoke this function in interrupt status.
+ * @note 对象遍历与名称比较不适合中断上下文；返回裸指针后调用者还应保证线程生命期。
  *
- * @param   name is the name of thread finding.
+ * @param name 要查找的线程名。
  *
- * @return  If the return value is a rt_thread structure pointer, the function is successfully executed.
- *          If the return value is RT_NULL, it means this operation failed.
+ * @return 找到的线程，未找到返回 RT_NULL。
  */
 rt_thread_t rt_thread_find(char *name)
 {
@@ -1211,16 +1223,15 @@ rt_thread_t rt_thread_find(char *name)
 RTM_EXPORT(rt_thread_find);
 
 /**
- * @brief   This function will return the name of the specified thread
+ * @brief 把指定线程的对象名复制到调用者缓冲区。
  *
- * @note    Please don't invoke this function in interrupt status
+ * @note 不应在中断上下文调用。
  *
- * @param   thread the thread to retrieve thread name
- * @param   name buffer to store the thread name string
- * @param   name_size maximum size of the buffer to store the thread name
+ * @param thread 目标线程。
+ * @param name 接收以空字符结尾名称的缓冲区。
+ * @param name_size 缓冲区最大字节数。
  *
- * @return  If the return value is RT_EOK, the function is successfully executed
- *          If the return value is -RT_EINVAL, it means this operation failed
+ * @return 成功为 RT_EOK；thread 为 RT_NULL 时为 -RT_EINVAL；其他错误由对象 API 返回。
  */
 rt_err_t rt_thread_get_name(rt_thread_t thread, char *name, rt_uint8_t name_size)
 {

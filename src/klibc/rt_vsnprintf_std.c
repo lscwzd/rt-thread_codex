@@ -3,10 +3,10 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2021-11-27     Meco Man     porting for rt_vsnprintf as the fully functional version
- * 2024-11-19     Meco Man     move to klibc
+ * 修改记录：
+ * 日期           作者         说明
+ * 2021-11-27     Meco Man     移植为功能完整的 rt_vsnprintf 后端
+ * 2024-11-19     Meco Man     移入 Klibc
  */
 
 /**
@@ -15,17 +15,14 @@
  * @author (c) Marco Paland (info@paland.com)
  *             2014-2019, PALANDesign Hannover, Germany
  *
- * @note Others have made smaller contributions to this file: see the
- * contributors page at https://github.com/eyalroz/printf/graphs/contributors
- * or ask one of the authors. The original code for exponential specifiers was
- * contributed by Martijn Jasperse <m.jasperse@gmail.com>.
+ * @note 其他贡献者见 https://github.com/eyalroz/printf/graphs/contributors。
+ * 指数格式的原始实现由 Martijn Jasperse <m.jasperse@gmail.com> 贡献。
  *
- * @brief Small stand-alone implementation of the printf family of functions
- * (`(v)printf`, `(v)s(n)printf` etc., geared towards use on embedded systems with
- * a very limited resources.
+ * @brief 面向资源受限嵌入式系统的独立 printf 家族实现。
  *
- * @note the implementations are thread-safe; re-entrant; use no functions from
- * the standard library; and do not dynamically allocate any memory.
+ * @note 实现不使用动态内存，也不依赖标准库格式化函数；所有可变状态均在调用栈或
+ * 输出器对象中，因此不同调用之间可重入。若回调输出器指向共享设备，设备自身的
+ * 并发保护仍由上层负责。
  *
  * @license The MIT License (MIT)
  *
@@ -54,62 +51,68 @@
 #include <limits.h>
 #include <stdbool.h>
 
-// 'ntoa' conversion buffer size, this must be big enough to hold one converted
-// numeric number including padded zeros (dynamically created on stack)
+/**
+ * @file rt_vsnprintf_std.c
+ * @brief RT-Thread 内置的完整格式化输出后端。
+ *
+ * 文件采用“输出器（output gadget）+ 类型转换器 + 格式串解析器”三层结构：解析器
+ * 识别每个 `%` 项，整数/浮点转换器生成字符，输出器统一负责写入上限、逻辑长度
+ * 统计和结尾 '\0'。即使缓冲区太小，输出器的 pos 仍继续增长，所以最终返回的是
+ * 完整结果所需长度，调用者可据此判断截断或重新分配缓冲区。
+ */
+
+/* 整数反向转换的栈缓冲区，必须容纳单个数字及精度产生的前导零。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_INTEGER_BUFFER_SIZE
 #define RT_KLIBC_USING_VSNPRINTF_INTEGER_BUFFER_SIZE    32
 #endif
 
-// size of the fixed (on-stack) buffer for printing individual decimal numbers.
-// this must be big enough to hold one converted floating-point value including
-// padded zeros.
+/* 单个十进制浮点片段使用的固定栈缓冲区，也要容纳精度补零。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE
 #define RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE    32
 #endif
 
-// Support for the decimal notation floating point conversion specifiers (%f, %F)
+/* 启用普通十进制浮点转换说明符 %f、%F。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS
 #define RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS
 #endif
 
-// Support for the exponential notation floating point conversion specifiers (%e, %g, %E, %G)
+/* 启用指数/自适应浮点转换说明符 %e、%g、%E、%G。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
 #define RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
 #endif
 
-// Support for the length write-back specifier (%n)
+/* 启用把已输出字符数写回指针的 %n；格式串不可信时应注意该写内存能力。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_WRITEBACK_SPECIFIER
 #define RT_KLIBC_USING_VSNPRINTF_WRITEBACK_SPECIFIER
 #endif
 
-// Default precision for the floating point conversion specifiers (the C standard sets this at 6)
+/* 浮点默认精度；C 标准规定为 6。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_FLOAT_PRECISION
 #define RT_KLIBC_USING_VSNPRINTF_FLOAT_PRECISION  6
 #endif
 
-// According to the C languages standard, printf() and related functions must be able to print any
-// integral number in floating-point notation, regardless of length, when using the %f specifier -
-// possibly hundreds of characters, potentially overflowing your buffers. In this implementation,
-// all values beyond this threshold are switched to exponential notation.
+/*
+ * 标准 %f 可能为极大整数部分输出数百个字符。为限制嵌入式实现的栈空间和执行时间，
+ * 整数位超过此阈值的值会改用指数形式。
+ */
 #ifndef RT_KLIBC_USING_VSNPRINTF_MAX_INTEGRAL_DIGITS_FOR_DECIMAL
 #define RT_KLIBC_USING_VSNPRINTF_MAX_INTEGRAL_DIGITS_FOR_DECIMAL 9
 #endif
 
-// Support for the long long integral types (with the ll, z and t length modifiers for specifiers
-// %d,%i,%o,%x,%X,%u, and with the %p specifier). Note: 'L' (long double) is not supported.
+/*
+ * 为 d/i/o/x/X/u/p 启用 long long 及 ll、z、t 长度修饰符。
+ * 注意：这里的 L（long double）仍不受支持。
+ */
 #ifndef RT_KLIBC_USING_VSNPRINTF_LONGLONG
 #define RT_KLIBC_USING_VSNPRINTF_LONGLONG
 #endif
 
-// The number of terms in a Taylor series expansion of log_10(x) to
-// use for approximation - including the power-zero term (i.e. the
-// value at the point of expansion).
+/* log10 近似所用泰勒展开项数，包含展开点处的零次项。项数越多通常越精确但更耗时。 */
 #ifndef RT_KLIBC_USING_VSNPRINTF_LOG10_TAYLOR_TERMS
 #define RT_KLIBC_USING_VSNPRINTF_LOG10_TAYLOR_TERMS 4
 #endif
 
-// Be extra-safe, and don't assume format specifiers are completed correctly
-// before the format string end.
+/* 调试构建或显式配置时，解析 `%` 项过程中持续检查格式串是否提前结束。 */
 #if !defined(RT_KLIBC_USING_VSNPRINTF_CHECK_NUL_IN_FORMAT_SPECIFIER) || defined(RT_USING_DEBUG)
 #define RT_KLIBC_USING_VSNPRINTF_CHECK_NUL_IN_FORMAT_SPECIFIER
 #endif
@@ -123,12 +126,12 @@
 #define PRINTF_PREFER_DECIMAL     false
 #define PRINTF_PREFER_EXPONENTIAL true
 
-// The following will convert the number-of-digits into an exponential-notation literal
+/* 两级宏先展开“最大十进制整数位数”，再拼成形如 1e9 的浮点常量。 */
 #define PRINTF_CONCATENATE(s1, s2) s1##s2
 #define PRINTF_EXPAND_THEN_CONCATENATE(s1, s2) PRINTF_CONCATENATE(s1, s2)
 #define PRINTF_FLOAT_NOTATION_THRESHOLD PRINTF_EXPAND_THEN_CONCATENATE(1e,RT_KLIBC_USING_VSNPRINTF_MAX_INTEGRAL_DIGITS_FOR_DECIMAL)
 
-// internal flag definitions
+/* 单个转换项的内部状态位；解析器组合它们，具体转换器再消费。 */
 #define FLAGS_ZEROPAD   (1U <<  0U)
 #define FLAGS_LEFT      (1U <<  1U)
 #define FLAGS_PLUS      (1U <<  2U)
@@ -138,15 +141,15 @@
 #define FLAGS_CHAR      (1U <<  6U)
 #define FLAGS_SHORT     (1U <<  7U)
 #define FLAGS_INT       (1U <<  8U)
-// Only used with RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS
+/* FLAGS_LONG 仅供 MSVC 风格整数说明符使用。 */
 #define FLAGS_LONG      (1U <<  9U)
 #define FLAGS_LONG_LONG (1U << 10U)
 #define FLAGS_PRECISION (1U << 11U)
 #define FLAGS_ADAPT_EXP (1U << 12U)
 #define FLAGS_POINTER   (1U << 13U)
-// Note: Similar, but not identical, effect as FLAGS_HASH
+/* FLAGS_POINTER 与 FLAGS_HASH 都产生前缀，但指针格式还有固定语义。 */
 #define FLAGS_SIGNED    (1U << 14U)
-// Only used with RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS
+/* FLAGS_SIGNED 仅供 MSVC 风格整数说明符使用。 */
 
 #ifdef RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS
 
@@ -188,7 +191,7 @@
 #error "No basic integer type has a size of 64 bits exactly"
 #endif
 
-#endif // RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS
+#endif /* RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS */
 
 
 typedef unsigned int printf_flags_t;
@@ -208,21 +211,19 @@ typedef unsigned long printf_unsigned_value_t;
 typedef long          printf_signed_value_t;
 #endif
 
-// The printf()-family functions return an `int`; it is therefore
-// unnecessary/inappropriate to use size_t - often larger than int
-// in practice - for non-negative related values, such as widths,
-// precisions, offsets into buffers used for printing and the sizes
-// of these buffers. instead, we use:
+/*
+ * printf 家族返回 int，因此宽度、精度、输出位置等最终可报告的非负量统一用
+ * unsigned int，而不是通常更宽的 size_t。入口处会把过大的缓冲区容量饱和到
+ * INT_MAX，避免最终返回值无法表示。
+ */
 typedef unsigned int printf_size_t;
 #define PRINTF_MAX_POSSIBLE_BUFFER_SIZE INT_MAX
-  // If we were to nitpick, this would actually be INT_MAX + 1,
-  // since INT_MAX is the maximum return value, which excludes the
-  // trailing '\0'.
+  /* 严格说容量可再包含一个终止符位置，但返回长度本身仍不能超过 INT_MAX。 */
 
 #if defined(RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS) || defined(RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS)
 #include <float.h>
 #if FLT_RADIX != 2
-// cppcheck-suppress preprocessorErrorDirective
+/* cppcheck：这里有意用预处理错误拒绝非二进制浮点表示。 */
 #error "Non-binary-radix floating-point types are unsupported."
 #endif
 
@@ -254,11 +255,10 @@ typedef union {
   double        F;
 } double_with_bit_access;
 
-// This is unnecessary in C99, since compound initializers can be used,
-// but:
-// 1. Some compilers are finicky about this;
-// 2. Some people may want to convert this to C89;
-// 3. If you try to use it as C++, only C++20 supports compound literals
+/*
+ * 把 double 装入联合体以读取 IEEE-754 位模式。单独使用辅助函数可兼容对复合字面量
+ * 支持不一致的编译器，也方便把代码移植到较旧 C 或 C++ 环境。
+ */
 static inline double_with_bit_access get_bit_access(double x)
 {
   double_with_bit_access dwba;
@@ -268,67 +268,59 @@ static inline double_with_bit_access get_bit_access(double x)
 
 static inline int get_sign_bit(double x)
 {
-  // The sign is stored in the highest bit
+  /* IEEE-754 符号位位于最高位。 */
   return (int) (get_bit_access(x).U >> (DOUBLE_SIZE_IN_BITS - 1));
 }
 
 static inline int get_exp2(double_with_bit_access x)
 {
-  // The exponent in an IEEE-754 floating-point number occupies a contiguous
-  // sequence of bits (e.g. 52..62 for 64-bit doubles), but with a non-trivial representation: An
-  // unsigned offset from some negative value (with the extremal offset values reserved for
-  // special use).
+  /* 指数域紧邻符号位并采用偏置编码；掩码取出后减去偏置，得到近似二进制指数。 */
   return (int)((x.U >> DOUBLE_STORED_MANTISSA_BITS ) & DOUBLE_EXPONENT_MASK) - DOUBLE_BASE_EXPONENT;
 }
 #define PRINTF_ABS(_x) ( (_x) > 0 ? (_x) : -(_x) )
 
-#endif // (RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS || RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS)
+#endif /* 已启用任一种浮点转换 */
 
-// Note in particular the behavior here on LONG_MIN or LLONG_MIN; it is valid
-// and well-defined, but if you're not careful you can easily trigger undefined
-// behavior with -LONG_MIN or -LLONG_MIN
+/*
+ * 先转换到对应无符号类型再取得幅值，使 LONG_MIN/LLONG_MIN 也能表示；直接对最小
+ * 有符号数做普通一元负号可能溢出并产生未定义行为。
+ */
 #define ABS_FOR_PRINTING(_x) ((printf_unsigned_value_t) ( (_x) > 0 ? (_x) : -((printf_signed_value_t)_x) ))
 
-// wrapper (used as buffer) for output function type
-//
-// One of the following must hold:
-// 1. max_chars is 0
-// 2. buffer is non-null
-// 3. function is non-null
-//
-// ... otherwise bad things will happen.
+/*
+ * 统一输出器：既可写固定缓冲区，也可逐字符调用回调，还可仅计数而丢弃输出。
+ * 必须满足以下至少一项：max_chars 为 0、buffer 非空、function 非空。
+ */
 typedef struct {
-  void (*function)(char c, void* extra_arg);
-  void* extra_function_arg;
-  char* buffer;
-  printf_size_t pos;
-  printf_size_t max_chars;
+  void (*function)(char c, void* extra_arg); /**< 可选逐字符输出回调。 */
+  void* extra_function_arg;                 /**< 原样传给回调的用户上下文。 */
+  char* buffer;                             /**< 回调为空时使用的目标缓冲区。 */
+  printf_size_t pos;                        /**< 完整结果的逻辑位置，截断后仍递增。 */
+  printf_size_t max_chars;                  /**< 最多可触达的缓冲区/回调字符数。 */
 } output_gadget_t;
 
-// Note: This function currently assumes it is not passed a '\0' c,
-// or alternatively, that '\0' can be passed to the function in the output
-// gadget. The former assumption holds within the printf library. It also
-// assumes that the output gadget has been properly initialized.
+/*
+ * 向输出器追加一个字符。格式化主体不会传入终止 '\0'；终止符由专用函数处理。
+ * 无论容量是否已满都递增 pos，容量判断只决定是否真的写入。
+ */
 static inline void putchar_via_gadget(output_gadget_t* gadget, char c)
 {
   printf_size_t write_pos = gadget->pos++;
-    // We're _always_ increasing pos, so as to count how may characters
-    // _would_ have been written if not for the max_chars limitation
+    /* 始终递增逻辑位置，统计在没有 max_chars 限制时本应输出的字符数。 */
   if (write_pos >= gadget->max_chars) {
     return;
   }
   if (gadget->function != NULL) {
-    // No check for c == '\0' .
+    /* 回调模式不额外过滤 '\0'；当前格式化主体保证不会传入。 */
     gadget->function(c, gadget->extra_function_arg);
   }
   else {
-    // it must be the case that gadget->buffer != NULL , due to the constraint
-    // on output_gadget_t ; and note we're relying on write_pos being non-negative.
+    /* 由输出器不变量可知，此时 buffer 必须非空。 */
     gadget->buffer[write_pos] = c;
   }
 }
 
-// Possibly-write the string-terminating '\0' character
+/* 缓冲区模式下在实际可写范围内追加或回退覆盖一个字符串终止符。 */
 static inline void append_termination_with_gadget(output_gadget_t* gadget)
 {
   if (gadget->function != NULL || gadget->max_chars == 0) {
@@ -364,10 +356,10 @@ static inline output_gadget_t buffer_gadget(char* buffer, size_t buffer_size)
   return result;
 }
 
-// internal secure strlen
-// @return The length of the string (excluding the terminating 0) limited by 'maxsize'
-// @note strlen uses size_t, but wes only use this function with printf_size_t
-// variables - hence the signature.
+/*
+ * 最多检查 maxsize 个字符的内部字符串长度函数，返回值不含 '\0'。这里所有消费者
+ * 都使用 printf_size_t，故无需引入通常更宽的 size_t 返回类型。
+ */
 static inline printf_size_t strnlen_s_(const char* str, printf_size_t maxsize)
 {
   const char* s;
@@ -376,15 +368,14 @@ static inline printf_size_t strnlen_s_(const char* str, printf_size_t maxsize)
 }
 
 
-// internal test if char is a digit (0-9)
-// @return true if char is a digit
+/* 判断字符是否为 ASCII 十进制数字 0～9。 */
 static inline bool is_digit_(char ch)
 {
   return (ch >= '0') && (ch <= '9');
 }
 
 
-// internal ASCII string to printf_size_t conversion
+/* 从格式串游标解析无符号十进制数；返回时游标停在首个非数字字符。 */
 static printf_size_t atou_(const char** str)
 {
   printf_size_t i = 0U;
@@ -395,24 +386,27 @@ static printf_size_t atou_(const char** str)
 }
 
 
-// output the specified string in reverse, taking care of any zero-padding
+/*
+ * 把逆序临时数组按正常顺序输出，并按宽度处理左右空格。整数提取数字时从最低位
+ * 开始，因此 buf 需要逆序读取；前导零已由上层提前放入逆序数组。
+ */
 static void out_rev_(output_gadget_t* output, const char* buf, printf_size_t len, printf_size_t width, printf_flags_t flags)
 {
   const printf_size_t start_pos = output->pos;
 
-  // pad spaces up to given width
+  /* 右对齐且不补零时，数字之前先补空格。 */
   if (!(flags & FLAGS_LEFT) && !(flags & FLAGS_ZEROPAD)) {
     for (printf_size_t i = len; i < width; i++) {
       putchar_via_gadget(output, ' ');
     }
   }
 
-  // reverse string
+  /* 从临时数组末尾向前读，恢复人类阅读的高位到低位顺序。 */
   while (len) {
     putchar_via_gadget(output, buf[--len]);
   }
 
-  // append pad spaces up to given width
+  /* 左对齐时，在数字之后补足字段宽度。 */
   if (flags & FLAGS_LEFT) {
     while (output->pos - start_pos < width) {
       putchar_via_gadget(output, ' ');
@@ -421,13 +415,15 @@ static void out_rev_(output_gadget_t* output, const char* buf, printf_size_t len
 }
 
 
-// Invoked by print_integer after the actual number has been printed, performing necessary
-// work on the number's prefix (as the number is initially printed in reverse order)
+/*
+ * 整数数字已逆序生成后，补齐精度、字段零、进制前缀和符号，再调用 out_rev_()。
+ * 由于整个临时数组最终会反向输出，这里追加前缀时也按反序放置。
+ */
 static void print_integer_finalization(output_gadget_t* output, char* buf, printf_size_t len, bool negative, numeric_base_t base, printf_size_t precision, printf_size_t width, printf_flags_t flags)
 {
   printf_size_t unpadded_len = len;
 
-  // pad with leading zeros
+  /* 在逆序数组尾部追加的零，最终会成为数字前导零。 */
   {
     if (!(flags & FLAGS_LEFT)) {
       if (width && (flags & FLAGS_ZEROPAD) && (negative || (flags & (FLAGS_PLUS | FLAGS_SPACE)))) {
@@ -443,21 +439,20 @@ static void print_integer_finalization(output_gadget_t* output, char* buf, print
     }
 
     if (base == BASE_OCTAL && (len > unpadded_len)) {
-      // Since we've written some zeros, we've satisfied the alternative format leading space requirement
+      /* 八进制已有前导零时，# 模式要求已经满足，不必再追加一个 0。 */
       flags &= ~FLAGS_HASH;
     }
   }
 
-  // handle hash
+  /* 处理 # 替代格式或指针格式所需的 0、0x、0X、0b 前缀。 */
   if (flags & (FLAGS_HASH | FLAGS_POINTER)) {
     if (!(flags & FLAGS_PRECISION) && len && ((len == precision) || (len == width))) {
-      // Let's take back some padding digits to fit in what will eventually
-      // be the format-specific prefix
+      /* 必要时收回一两个仅用于宽度的补零，为最终前缀让出字段空间。 */
       if (unpadded_len < len) {
-        len--; // This should suffice for BASE_OCTAL
+        len--; /* 八进制前缀只需要一个字符。 */
       }
       if (len && (base == BASE_HEX || base == BASE_BINARY) && (unpadded_len < len)) {
-        len--; // ... and an extra one for 0x or 0b
+        len--; /* 十六进制或二进制前缀还需要第二个字符。 */
       }
     }
     if ((base == BASE_HEX) && !(flags & FLAGS_UPPERCASE) && (len < RT_KLIBC_USING_VSNPRINTF_INTEGER_BUFFER_SIZE)) {
@@ -479,7 +474,7 @@ static void print_integer_finalization(output_gadget_t* output, char* buf, print
       buf[len++] = '-';
     }
     else if (flags & FLAGS_PLUS) {
-      buf[len++] = '+';  // ignore the space if the '+' exists
+      buf[len++] = '+';  /* '+' 的优先级高于空格标志。 */
     }
     else if (flags & FLAGS_SPACE) {
       buf[len++] = ' ';
@@ -489,7 +484,10 @@ static void print_integer_finalization(output_gadget_t* output, char* buf, print
   out_rev_(output, buf, len, width, flags);
 }
 
-// An internal itoa-like function
+/*
+ * 类似 itoa 的内部整数转换：反复除以进制取得最低位，写入逆序栈数组，再统一补齐
+ * 符号、前缀、精度和宽度。negative 已由调用者从原有符号数中分离。
+ */
 static void print_integer(output_gadget_t* output, printf_unsigned_value_t value, bool negative, numeric_base_t base, printf_size_t precision, printf_size_t width, printf_flags_t flags)
 {
   char buf[RT_KLIBC_USING_VSNPRINTF_INTEGER_BUFFER_SIZE];
@@ -499,14 +497,11 @@ static void print_integer(output_gadget_t* output, printf_unsigned_value_t value
     if ( !(flags & FLAGS_PRECISION) ) {
       buf[len++] = '0';
       flags &= ~FLAGS_HASH;
-      // We drop this flag this since either the alternative and regular modes of the specifier
-      // don't differ on 0 values, or (in the case of octal) we've already provided the special
-      // handling for this mode.
+      /* 零值的普通/替代形式不再需要额外前缀；八进制的特殊零也已经生成。 */
     }
     else if (base == BASE_HEX) {
       flags &= ~FLAGS_HASH;
-      // We drop this flag this since either the alternative and regular modes of the specifier
-      // don't differ on 0 values
+      /* 十六进制零值不输出额外 0x 前缀。 */
     }
   }
   else {
@@ -522,14 +517,11 @@ static void print_integer(output_gadget_t* output, printf_unsigned_value_t value
 
 #if defined(RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS) || defined(RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS)
 
-// Stores a fixed-precision representation of a double relative
-// to a fixed precision (which cannot be determined by examining this structure)
+/* 按调用者给定精度拆开的 double；单看结构本身无法知道 fractional 的缩放倍数。 */
 struct double_components {
-  int_fast64_t integral;
-  int_fast64_t fractional;
-    // ... truncation of the actual fractional part of the double value, scaled
-    // by the precision value
-  bool is_negative;
+  int_fast64_t integral;   /**< 整数部分的绝对值。 */
+  int_fast64_t fractional; /**< 小数部分截断后乘以 10^precision 的整数值。 */
+  bool is_negative;        /**< 原始数是否带负号，包括可识别的负零。 */
 };
 
 #define NUM_DECIMAL_DIGITS_IN_INT64_T 18
@@ -542,9 +534,10 @@ static const double powers_of_10[NUM_DECIMAL_DIGITS_IN_INT64_T] = {
 #define PRINTF_MAX_SUPPORTED_PRECISION NUM_DECIMAL_DIGITS_IN_INT64_T - 1
 
 
-// Break up a double number - which is known to be a finite non-negative number -
-// into its base-10 parts: integral - before the decimal point, and fractional - after it.
-// Taken the precision into account, but does not change it even internally.
+/*
+ * 按指定十进制精度把有限 double 拆成整数部分和经缩放的小数部分，并完成舍入。
+ * 精度本身不会在函数内修改；负号独立保存在结果结构中。
+ */
 static struct double_components get_components(double number, printf_size_t precision)
 {
   struct double_components number_;
@@ -558,22 +551,21 @@ static struct double_components get_components(double number, printf_size_t prec
 
   if (remainder > 0.5) {
     ++number_.fractional;
-    // handle rollover, e.g. case 0.99 with precision 1 is 1.0
+    /* 处理舍入进位，例如 0.99 在精度 1 时应成为 1.0。 */
     if ((double) number_.fractional >= powers_of_10[precision]) {
       number_.fractional = 0;
       ++number_.integral;
     }
   }
   else if ((remainder == 0.5) && ((number_.fractional == 0U) || (number_.fractional & 1U))) {
-    // if halfway, round up if odd OR if last digit is 0
+    /* 正好位于中点时，根据末位奇偶及零值规则决定向上舍入。 */
     ++number_.fractional;
   }
 
   if (precision == 0U) {
     remainder = abs_number - (double) number_.integral;
     if ((!(remainder < 0.5) || (remainder > 0.5)) && (number_.integral & 1)) {
-      // exactly 0.5 and ODD, then round up
-      // 1.5 -> 2, but 2.5 -> 2
+      /* 精度为 0 时执行偶数舍入：1.5→2，而 2.5→2。 */
       ++number_.integral;
     }
   }
@@ -582,9 +574,11 @@ static struct double_components get_components(double number, printf_size_t prec
 
 #ifdef RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
 struct scaling_factor {
-  double raw_factor;
-  bool multiply; // if true, need to multiply by raw_factor; otherwise need to divide by it
+  double raw_factor; /**< 缩放因子的绝对数值。 */
+  bool multiply;     /**< 为真时乘以 raw_factor，否则除以它。 */
 };
+
+/* 把缩放策略应用到数值；乘/除方向分开可降低极端 10 的幂直接溢出的机会。 */
 
 static double apply_scaling(double num, struct scaling_factor normalization)
 {
@@ -594,7 +588,7 @@ static double apply_scaling(double num, struct scaling_factor normalization)
 static double unapply_scaling(double normalized, struct scaling_factor normalization)
 {
 #if defined(__GNUC__) && !defined(__clang__) && !defined(__ARMCC_VERSION) /* GCC */
-// accounting for a static analysis bug in GCC 6.x and earlier
+/* 规避 GCC 6 及更早版本的静态分析误报。 */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 #endif
@@ -615,7 +609,7 @@ static struct scaling_factor update_normalization(struct scaling_factor sf, doub
     int factor_exp2 = get_exp2(get_bit_access(sf.raw_factor));
     int extra_factor_exp2 = get_exp2(get_bit_access(extra_multiplicative_factor));
 
-    // Divide the larger-exponent raw raw_factor by the smaller
+    /* 用指数绝对值较大的因子除以较小者，尽量让中间结果保持可表示。 */
     if (PRINTF_ABS(factor_exp2) > PRINTF_ABS(extra_factor_exp2)) {
       result.multiply = false;
       result.raw_factor = sf.raw_factor / extra_multiplicative_factor;
@@ -636,9 +630,10 @@ static struct double_components get_normalized_components(bool negative, printf_
 
   bool close_to_representation_extremum = ( (-floored_exp10 + (int) precision) >= DBL_MAX_10_EXP - 1 );
   if (close_to_representation_extremum) {
-    // We can't have a normalization factor which also accounts for the precision, i.e. moves
-    // some decimal digits into the mantissa, since it's unrepresentable, or nearly unrepresentable.
-    // So, we'll give up early on getting extra precision...
+    /*
+     * 接近 double 表示极限时，不能再把精度对应的 10 的幂并入归一化因子，否则因子
+     * 本身可能不可表示；此时退回普通拆分，牺牲部分额外有效位。
+     */
     return get_components(negative ? -scaled : scaled, precision);
   }
   components.integral = (int_fast64_t) scaled;
@@ -648,37 +643,40 @@ static struct double_components get_normalized_components(bool negative, printf_
   double scaled_remainder = apply_scaling(remainder, account_for_precision);
   double rounding_threshold = 0.5;
 
-  components.fractional = (int_fast64_t) scaled_remainder; // when precision == 0, the assigned value should be 0
-  scaled_remainder -= (double) components.fractional; //when precision == 0, this will not change scaled_remainder
+  components.fractional = (int_fast64_t) scaled_remainder; /* 精度为 0 时应得到 0。 */
+  scaled_remainder -= (double) components.fractional; /* 精度为 0 时余数保持原值。 */
 
   components.fractional += (scaled_remainder >= rounding_threshold);
   if (scaled_remainder == rounding_threshold) {
-    // banker's rounding: Round towards the even number (making the mean error 0)
+    /* 银行家舍入：正好在中点时向偶数靠拢，降低累计平均误差。 */
     components.fractional &= ~((int_fast64_t) 0x1);
   }
-  // handle rollover, e.g. the case of 0.99 with precision 1 becoming (0,100),
-  // and must then be corrected into (1, 0).
-  // Note: for precision = 0, this will "translate" the rounding effect from
-  // the fractional part to the integral part where it should actually be
-  // felt (as prec_power_of_10 is 1)
+  /*
+   * 修正小数舍入溢出，例如 0.99、精度 1 的临时结果 (0,10) 要变为 (1,0)。
+   * 精度为 0 时 10^precision 为 1，这一步也会把舍入自然传递给整数部分。
+   */
   if ((double) components.fractional >= prec_power_of_10) {
     components.fractional = 0;
     ++components.integral;
   }
   return components;
 }
-#endif // RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
+#endif /* RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS */
 
+/*
+ * 把已经拆开的十进制数写入逆序缓冲区：先小数、再小数点、再整数、最后符号。
+ * %g/%G 可去除尾随零；# 标志则强制保留小数点及精度要求的零。
+ */
 static void print_broken_up_decimal(
   struct double_components number_, output_gadget_t* output, printf_size_t precision,
   printf_size_t width, printf_flags_t flags, char *buf, printf_size_t len)
 {
   if (precision != 0U) {
-    // do fractional part, as an unsigned number
+    /* 小数部分以非负缩放整数处理。 */
 
     printf_size_t count = precision;
 
-    // %g/%G mandates we skip the trailing 0 digits...
+    /* %g/%G 未带 # 时去掉小数末尾无意义的零。 */
     if ((flags & FLAGS_ADAPT_EXP) && !(flags & FLAGS_HASH) && (number_.fractional > 0)) {
       while(true) {
         int_fast64_t digit = number_.fractional % 10U;
@@ -689,8 +687,7 @@ static void print_broken_up_decimal(
         number_.fractional /= 10U;
 
       }
-      // ... and even the decimal point if there are no
-      // non-zero fractional part digits (see below)
+      /* 若去零后没有小数位，下面也不会输出小数点。 */
     }
 
     if (number_.fractional > 0 || !(flags & FLAGS_ADAPT_EXP) || (flags & FLAGS_HASH) ) {
@@ -701,7 +698,7 @@ static void print_broken_up_decimal(
           break;
         }
       }
-      // add extra 0s
+      /* 小数有效位不足 precision 时补齐零。 */
       while ((len < RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE) && (count > 0U)) {
         buf[len++] = '0';
         --count;
@@ -717,8 +714,7 @@ static void print_broken_up_decimal(
     }
   }
 
-  // Write the integer part of the number (it comes after the fractional
-  // since the character order is reversed)
+  /* 整个缓冲区最终逆序输出，所以整数部分在小数部分之后写入临时数组。 */
   while (len < RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE) {
     buf[len++] = (char)('0' + (number_.integral % 10));
     if (!(number_.integral /= 10)) {
@@ -726,7 +722,7 @@ static void print_broken_up_decimal(
     }
   }
 
-  // pad leading zeros
+  /* 右对齐且启用 0 标志时，用数字前导零补足字段宽度。 */
   if (!(flags & FLAGS_LEFT) && (flags & FLAGS_ZEROPAD)) {
     if (width && (number_.is_negative || (flags & (FLAGS_PLUS | FLAGS_SPACE)))) {
       width--;
@@ -741,7 +737,7 @@ static void print_broken_up_decimal(
       buf[len++] = '-';
     }
     else if (flags & FLAGS_PLUS) {
-      buf[len++] = '+';  // ignore the space if the '+' exists
+      buf[len++] = '+';  /* '+' 优先于空格标志。 */
     }
     else if (flags & FLAGS_SPACE) {
       buf[len++] = ' ';
@@ -751,7 +747,7 @@ static void print_broken_up_decimal(
   out_rev_(output, buf, len, width, flags);
 }
 
-      // internal ftoa for fixed decimal floating point
+/* 固定十进制浮点输出：先按精度拆分，再交给公共十进制片段输出器。 */
 static void print_decimal_number(output_gadget_t* output, double number, printf_size_t precision, printf_size_t width, printf_flags_t flags, char* buf, printf_size_t len)
 {
   struct double_components value_ = get_components(number, precision);
@@ -760,8 +756,7 @@ static void print_decimal_number(output_gadget_t* output, double number, printf_
 
 #ifdef RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
 
-// A floor function - but one which only works for numbers whose
-// floor value is representable by an int.
+/* 只适用于 floor(x) 能由 int 表示的简化向下取整。 */
 static int bastardized_floor(double x)
 {
   if (x >= 0) { return (int) x; }
@@ -769,55 +764,53 @@ static int bastardized_floor(double x)
   return ( ((double) n) == x ) ? n : n-1;
 }
 
-// Computes the base-10 logarithm of the input number - which must be an actual
-// positive number (not infinity or NaN, nor a sub-normal)
+/*
+ * 近似计算正常、有限正数的十进制对数；调用者必须先排除 0、负数、NaN、无穷大和
+ * 非规格化数。用途是估计指数格式的十进制指数，并非通用数学库 log10。
+ */
 static double log10_of_positive(double positive_number)
 {
-  // The implementation follows David Gay (https://www.ampl.com/netlib/fp/dtoa.c).
-  //
-  // Since log_10 ( M * 2^x ) = log_10(M) + x , we can separate the components of
-  // our input number, and need only solve log_10(M) for M between 1 and 2 (as
-  // the base-2 mantissa is always 1-point-something). In that limited range, a
-  // Taylor series expansion of log10(x) should serve us well enough; and we'll
-  // take the mid-point, 1.5, as the point of expansion.
+  /*
+   * 算法参考 David Gay 的 dtoa。利用 log10(M×2^x)=log10(M)+x×log10(2)，
+   * 把尾数归一化到 [1,2)，只需在中点 1.5 附近用少量泰勒项近似 log10(M)。
+   */
 
   double_with_bit_access dwba = get_bit_access(positive_number);
-  // based on the algorithm by David Gay (https://www.ampl.com/netlib/fp/dtoa.c)
+  /* 取出带偏置修正后的二进制指数。 */
   int exp2 = get_exp2(dwba);
-  // drop the exponent, so dwba.F comes into the range [1,2)
+  /* 用基准指数替换原指数域，使 dwba.F 落入 [1,2)。 */
   dwba.U = (dwba.U & (((double_uint_t) (1) << DOUBLE_STORED_MANTISSA_BITS) - 1U)) |
            ((double_uint_t) DOUBLE_BASE_EXPONENT << DOUBLE_STORED_MANTISSA_BITS);
   double z = (dwba.F - 1.5);
   return (
-    // Taylor expansion around 1.5:
-    0.1760912590556812420           // Expansion term 0: ln(1.5)            / ln(10)
-    + z     * 0.2895296546021678851 // Expansion term 1: (M - 1.5)   * 2/3  / ln(10)
+    /* 以 1.5 为展开点的泰勒近似： */
+    0.1760912590556812420           /* 第 0 项：ln(1.5) / ln(10) */
+    + z     * 0.2895296546021678851 /* 第 1 项：(M-1.5)×2/3 / ln(10) */
 #if RT_KLIBC_USING_VSNPRINTF_LOG10_TAYLOR_TERMS > 2
-    - z*z   * 0.0965098848673892950 // Expansion term 2: (M - 1.5)^2 * 2/9  / ln(10)
+    - z*z   * 0.0965098848673892950 /* 第 2 项：(M-1.5)^2×2/9 / ln(10) */
 #if RT_KLIBC_USING_VSNPRINTF_LOG10_TAYLOR_TERMS > 3
-    + z*z*z * 0.0428932821632841311 // Expansion term 2: (M - 1.5)^3 * 8/81 / ln(10)
+    + z*z*z * 0.0428932821632841311 /* 第 3 项：(M-1.5)^3×8/81 / ln(10) */
 #endif
 #endif
-    // exact log_2 of the exponent x, with logarithm base change
-    + exp2 * 0.30102999566398119521 // = exp2 * log_10(2) = exp2 * ln(2)/ln(10)
+    /* 二进制指数经换底公式得到的精确线性项： */
+    + exp2 * 0.30102999566398119521 /* exp2×log10(2) */
   );
 }
 
 
 static double pow10_of_int(int floored_exp10)
 {
-  // A crude hack for avoiding undesired behavior with barely-normal or slightly-subnormal values.
+  /* 最小十进制指数单独返回预定义值，避免正常/非规格化边界附近的近似异常。 */
   if (floored_exp10 == DOUBLE_MAX_SUBNORMAL_EXPONENT_OF_10) {
     return DOUBLE_MAX_SUBNORMAL_POWER_OF_10;
   }
-  // Compute 10^(floored_exp10) but (try to) make sure that doesn't overflow
+  /* 把 10^n 分解成 2^exp2×exp(z)，尽量避免直接幂运算的中间溢出。 */
   double_with_bit_access dwba;
   int exp2 = bastardized_floor(floored_exp10 * 3.321928094887362 + 0.5);
   const double z  = floored_exp10 * 2.302585092994046 - exp2 * 0.6931471805599453;
   const double z2 = z * z;
   dwba.U = ((double_uint_t)(exp2) + DOUBLE_BASE_EXPONENT) << DOUBLE_STORED_MANTISSA_BITS;
-  // compute exp(z) using continued fractions,
-  // see https://en.wikipedia.org/wiki/Exponential_function#Continued_fractions_for_ex
+  /* 用连分式近似 exp(z)。 */
   dwba.F *= 1 + 2 * z / (2 - z + (z2 / (6 + (z2 / (10 + z2 / 14)))));
   return dwba.F;
 }
@@ -825,7 +818,7 @@ static double pow10_of_int(int floored_exp10)
 static void print_exponential_number(output_gadget_t* output, double number, printf_size_t precision, printf_size_t width, printf_flags_t flags, char* buf, printf_size_t len)
 {
   const bool negative = get_sign_bit(number);
-  // This number will decrease gradually (by factors of 10) as we "extract" the exponent out of it
+  /* 提取十进制指数时，abs_number 会按 10 的幂归一化。 */
   double abs_number =  negative ? -number : number;
 
   int floored_exp10;
@@ -833,16 +826,16 @@ static void print_exponential_number(output_gadget_t* output, double number, pri
   struct scaling_factor normalization;
 
 
-  // Determine the decimal exponent
+  /* 估计 floor(log10(abs_number))，再用一次比较修正近似舍入误差。 */
   if (abs_number == 0.0) {
-    // TODO: This is a special-case for 0.0 (and -0.0); but proper handling is required for denormals more generally.
-    floored_exp10 = 0; // ... and no need to set a normalization factor or check the powers table
+    /* 这里只特判 0.0/-0.0；更一般的非规格化数仍依赖后续近似路径。 */
+    floored_exp10 = 0; /* 零无需归一化因子，也无需查询 10 的幂表。 */
   }
   else  {
     double exp10 = log10_of_positive(abs_number);
     floored_exp10 = bastardized_floor(exp10);
     double p10 = pow10_of_int(floored_exp10);
-    // correct for rounding errors
+    /* 若近似得到的 10^指数反而大于原数，将指数向下修正一位。 */
     if (abs_number < p10) {
       floored_exp10--;
       p10 /= 10;
@@ -851,26 +844,22 @@ static void print_exponential_number(output_gadget_t* output, double number, pri
     normalization.raw_factor = abs_exp10_covered_by_powers_table ? powers_of_10[PRINTF_ABS(floored_exp10)] : p10;
   }
 
-  // We now begin accounting for the widths of the two parts of our printed field:
-  // the decimal part after decimal exponent extraction, and the base-10 exponent part.
-  // For both of these, the value of 0 has a special meaning, but not the same one:
-  // a 0 exponent-part width means "don't print the exponent"; a 0 decimal-part width
-  // means "use as many characters as necessary".
+  /*
+   * 输出字段分成归一化十进制部分和指数部分。指数宽度为 0 表示不输出指数；十进制
+   * 部分宽度为 0 则表示按实际需要输出，不施加宽度限制。
+   */
 
   bool fall_back_to_decimal_only_mode = false;
   if (flags & FLAGS_ADAPT_EXP) {
     int required_significant_digits = (precision == 0) ? 1 : (int) precision;
-    // Should we want to fall-back to "%f" mode, and only print the decimal part?
+    /* %g 在指数位于 [-4, 有效数字数) 时回退为类似 %f 的普通十进制形式。 */
     fall_back_to_decimal_only_mode = (floored_exp10 >= -4 && floored_exp10 < required_significant_digits);
-    // Now, let's adjust the precision
-    // This also decided how we adjust the precision value - as in "%g" mode,
-    // "precision" is the number of _significant digits_, and this is when we "translate"
-    // the precision value to an actual number of decimal digits.
+    /* %g 的 precision 表示有效数字数；这里换算为小数点后的真实位数。 */
     int precision_ = fall_back_to_decimal_only_mode ?
                      (int) precision - 1 - floored_exp10 :
-        (int) precision - 1; // the presence of the exponent ensures only one significant digit comes before the decimal point
+        (int) precision - 1; /* 指数形式中小数点前固定只有一位有效数字。 */
     precision = (precision_ > 0 ? (unsigned) precision_ : 0U);
-    flags |= FLAGS_PRECISION;   // make sure print_broken_up_decimal respects our choice above
+    flags |= FLAGS_PRECISION;   /* 要求下层严格采用刚换算出的精度。 */
   }
 
   normalization.multiply = (floored_exp10 < 0 && abs_exp10_covered_by_powers_table);
@@ -880,15 +869,14 @@ static void print_exponential_number(output_gadget_t* output, double number, pri
     get_components(negative ? -abs_number : abs_number, precision) :
     get_normalized_components(negative, precision, abs_number, normalization, floored_exp10);
 
-  // Account for roll-over, e.g. rounding from 9.99 to 100.0 - which effects
-  // the exponent and may require additional tweaking of the parts
+  /* 处理 9.99 舍入到 10.0/100.0 一类跨位进位，并同步修正指数和小数位数。 */
   if (fall_back_to_decimal_only_mode) {
     if ((flags & FLAGS_ADAPT_EXP) && floored_exp10 >= -1 && decimal_part_components.integral == powers_of_10[floored_exp10 + 1]) {
-      floored_exp10++; // Not strictly necessary, since floored_exp10 is no longer really used
+      floored_exp10++; /* 回退普通格式后该指数基本不再输出，但仍保持内部一致。 */
       precision--;
-      // ... and it should already be the case that decimal_part_components.fractional == 0
+      /* 此时 fractional 按舍入逻辑应已经为 0。 */
     }
-    // TODO: What about rollover strictly within the fractional part?
+    /* 尚未单独处理只发生在小数部分内部的其他进位边界。 */
   }
   else {
     if (decimal_part_components.integral >= 10) {
@@ -898,23 +886,18 @@ static void print_exponential_number(output_gadget_t* output, double number, pri
     }
   }
 
-  // the floored_exp10 format is "E%+03d" and largest possible floored_exp10 value for a 64-bit double
-  // is "307" (for 2^1023), so we set aside 4-5 characters overall
+  /* 指数形如 E+07；两位指数占 4 字符，三位指数（double 最大约 307）占 5 字符。 */
   printf_size_t exp10_part_width = fall_back_to_decimal_only_mode ? 0U : (PRINTF_ABS(floored_exp10) < 100) ? 4U : 5U;
 
   printf_size_t decimal_part_width =
     ((flags & FLAGS_LEFT) && exp10_part_width) ?
-      // We're padding on the right, so the width constraint is the exponent part's
-      // problem, not the decimal part's, so we'll use as many characters as we need:
+      /* 左对齐意味着最终在指数之后补空格，十进制部分本身无需限制宽度。 */
       0U :
-      // We're padding on the left; so the width constraint is the decimal part's
-      // problem. Well, can both the decimal part and the exponent part fit within our overall width?
+      /* 右对齐时先扣除指数部分，余下宽度交给十进制部分。 */
       ((width > exp10_part_width) ?
-        // Yes, so we limit our decimal part's width.
-        // (Note this is trivially valid even if we've fallen back to "%f" mode)
+        /* 总宽度足够，同时也适用于已回退的 %f 形式。 */
         width - exp10_part_width :
-        // No; we just give up on any restriction on the decimal part and use as many
-        // characters as we need
+        /* 总宽度连指数都容不下时，不截断数字，按所需长度完整计数输出。 */
         0U);
 
   const printf_size_t printed_exponential_start_pos = output->pos;
@@ -927,21 +910,21 @@ static void print_exponential_number(output_gadget_t* output, double number, pri
                   floored_exp10 < 0, 10, 0, exp10_part_width - 1,
                 FLAGS_ZEROPAD | FLAGS_PLUS);
     if (flags & FLAGS_LEFT) {
-      // We need to right-pad with spaces to meet the width requirement
+      /* 左对齐：指数输出完毕后在右侧补空格。 */
       while (output->pos - printed_exponential_start_pos < width) {
         putchar_via_gadget(output, ' ');
       }
     }
   }
 }
-#endif  // RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
+#endif  /* RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS */
 
 static void print_floating_point(output_gadget_t* output, double value, printf_size_t precision, printf_size_t width, printf_flags_t flags, bool prefer_exponential)
 {
   char buf[RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE];
   printf_size_t len = 0U;
 
-  // test for special values
+  /* 特殊值先处理。out_rev_() 要求输入逆序，所以 inf/nan 的字面量也反向存放。 */
   if (value != value) {
     out_rev_(output, "nan", 3, width, flags);
     return;
@@ -957,23 +940,27 @@ static void print_floating_point(output_gadget_t* output, double value, printf_s
 
   if (!prefer_exponential &&
       ((value > PRINTF_FLOAT_NOTATION_THRESHOLD) || (value < -PRINTF_FLOAT_NOTATION_THRESHOLD))) {
-    // The required behavior of standard printf is to print _every_ integral-part digit -- which could mean
-    // printing hundreds of characters, overflowing any fixed internal buffer and necessitating a more complicated
-    // implementation.
+    /*
+     * 标准 %f 要求输出所有整数位，极端值可能需要数百字符并超过固定内部缓冲区。
+     * 本实现超过配置阈值时改走指数格式；若编译时禁用指数支持，该值不会产生数字。
+     */
 #ifdef RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
     print_exponential_number(output, value, precision, width, flags, buf, len);
 #endif
     return;
   }
 
-  // set default precision, if not set explicitly
+  /* 格式串未显式给出精度时采用配置的浮点默认值。 */
   if (!(flags & FLAGS_PRECISION)) {
     precision = RT_KLIBC_USING_VSNPRINTF_FLOAT_PRECISION;
   }
 
-  // limit precision so that our integer holding the fractional part does not overflow
+  /*
+   * fractional 使用 int64 保存，最多直接计算 17 位小数；超出部分先作为逆序尾随零
+   * 放进输出缓冲区，以维持请求的结果长度，再把实际计算精度降到可支持范围。
+   */
   while ((len < RT_KLIBC_USING_VSNPRINTF_DECIMAL_BUFFER_SIZE) && (precision > PRINTF_MAX_SUPPORTED_PRECISION)) {
-    buf[len++] = '0'; // This respects the precision in terms of result length only
+    buf[len++] = '0'; /* 只在输出长度层面满足额外精度，不增加数值有效信息。 */
     precision--;
   }
 
@@ -985,10 +972,12 @@ static void print_floating_point(output_gadget_t* output, double value, printf_s
     print_decimal_number(output, value, precision, width, flags, buf, len);
 }
 
-#endif  // (RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS || RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS)
+#endif  /* 已启用任一种浮点转换 */
 
-// Advances the format pointer past the flags, and returns the parsed flags
-// due to the characters passed
+/*
+ * 连续读取 0、-、+、空格、# 标志，推进格式串游标并返回位集合。标志允许重复，
+ * 重复置位没有额外效果；遇到第一个非标志字符停止。
+ */
 static printf_flags_t parse_flags(const char** format)
 {
   printf_flags_t flags = 0U;
@@ -1004,6 +993,18 @@ static printf_flags_t parse_flags(const char** format)
   } while (true);
 }
 
+/**
+ * @brief 解析完整格式串并把转换结果送入统一输出器。
+ *
+ * @param output 已初始化的缓冲区、回调或丢弃输出器。
+ * @param format printf 风格格式字符串。
+ * @param args 与每个转换说明符严格匹配的参数列表。
+ *
+ * 每个转换项按 `%[flags][width][.precision][length]specifier` 解析。宽度和精度可由
+ * `*` 从 int 参数取得；h/hh、l/ll、j、z、t 控制整数取参类型。普通字符直接输出。
+ * 启用安全检查时，ADVANCE_IN_FORMAT_STRING 会在不完整的尾部 `%` 项处立即返回，
+ * 避免越过格式串终止符。
+ */
 static inline void format_string_loop(output_gadget_t* output, const char* format, va_list args)
 {
 #ifdef RT_KLIBC_USING_VSNPRINTF_CHECK_NUL_IN_FORMAT_SPECIFIER
@@ -1016,17 +1017,17 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
   while (*format)
   {
     if (*format != '%') {
-      // A regular content character
+      /* 普通内容字符不触碰 va_list，直接交给输出器。 */
       putchar_via_gadget(output, *format);
       format++;
       continue;
     }
-    // We're parsing a format specifier: %[flags][width][.precision][length]
+    /* 开始解析转换项：%[标志][宽度][.精度][长度]转换字符。 */
     ADVANCE_IN_FORMAT_STRING(format);
 
     printf_flags_t flags = parse_flags(&format);
 
-    // evaluate width field
+    /* 宽度为常量数字或 '*' 参数；负的星号宽度表示左对齐。 */
     printf_size_t width = 0U;
     if (is_digit_(*format)) {
       width = (printf_size_t) atou_(&format);
@@ -1034,7 +1035,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
     else if (*format == '*') {
       const int w = va_arg(args, int);
       if (w < 0) {
-        flags |= FLAGS_LEFT;    // reverse padding
+        flags |= FLAGS_LEFT;    /* 负宽度改成绝对值，并把填充方向反转为右侧。 */
         width = (printf_size_t)-w;
       }
       else {
@@ -1043,7 +1044,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
       ADVANCE_IN_FORMAT_STRING(format);
     }
 
-    // evaluate precision field
+    /* 点号后的精度为数字或 '*' 参数；负/零星号精度在此实现中归为 0。 */
     printf_size_t precision = 0U;
     if (*format == '.') {
       flags |= FLAGS_PRECISION;
@@ -1058,12 +1059,12 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
       }
     }
 
-    // evaluate length field
+    /* 解析长度修饰符，记录随后 va_arg 应取出的整数宽度。 */
     switch (*format) {
 #ifdef RT_KLIBC_USING_VSNPRINTF_MSVC_STYLE_INTEGER_SPECIFIERS
       case 'I' : {
         ADVANCE_IN_FORMAT_STRING(format);
-        // Greedily parse for size in bits: 8, 16, 32 or 64
+        /* MSVC 风格 I8/I16/I32/I64：贪婪读取位数并映射到实际基础整数类型。 */
         switch(*format) {
           case '8':               flags |= FLAGS_INT8;
             ADVANCE_IN_FORMAT_STRING(format);
@@ -1117,7 +1118,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         break;
     }
 
-    // evaluate specifier
+    /* 长度和格式参数已就绪，按最终转换字符取参并输出。 */
     switch (*format) {
       case 'd' :
       case 'i' :
@@ -1143,7 +1144,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         }
         else {
           base = BASE_DECIMAL;
-          flags &= ~FLAGS_HASH; // decimal integers have no alternative presentation
+          flags &= ~FLAGS_HASH; /* 十进制整数没有 # 替代前缀。 */
         }
 
         if (*format == 'X') {
@@ -1151,13 +1152,13 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         }
 
         format++;
-        // ignore '0' flag when precision is given
+        /* 整数显式精度优先于 0 填充标志。 */
         if (flags & FLAGS_PRECISION) {
           flags &= ~FLAGS_ZEROPAD;
         }
 
         if (flags & FLAGS_SIGNED) {
-          // A signed specifier: d, i or possibly I + bit size if enabled
+          /* 有符号 d/i（以及可选 MSVC 位宽格式）：分离符号后按无符号幅值打印。 */
 
           if (flags & FLAGS_LONG_LONG) {
 #ifdef RT_KLIBC_USING_VSNPRINTF_LONGLONG
@@ -1170,10 +1171,10 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
             print_integer(output, ABS_FOR_PRINTING(value), value < 0, base, precision, width, flags);
           }
           else {
-            // We never try to interpret the argument as something potentially-smaller than int,
-            // due to integer promotion rules: Even if the user passed a short int, short unsigned
-            // etc. - these will come in after promotion, as int's (or unsigned for the case of
-            // short unsigned when it has the same size as int)
+            /*
+             * char/short 作为可变参数会先发生整数提升，所以必须按 int 取出，再按长度
+             * 标志截回目标宽度；直接用 va_arg(args, short) 是错误的。
+             */
             const int value =
               (flags & FLAGS_CHAR) ? (signed char) va_arg(args, int) :
               (flags & FLAGS_SHORT) ? (short int) va_arg(args, int) :
@@ -1182,7 +1183,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
           }
         }
         else {
-          // An unsigned specifier: u, x, X, o, b
+          /* 无符号 u/x/X/o/b 不接受正号或前导空格。 */
 
           flags &= ~(FLAGS_PLUS | FLAGS_SPACE);
 
@@ -1222,18 +1223,18 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         print_floating_point(output, va_arg(args, double), precision, width, flags, PRINTF_PREFER_EXPONENTIAL);
         format++;
         break;
-#endif  // RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
+#endif  /* RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS */
       case 'c' : {
         printf_size_t l = 1U;
-        // pre padding
+        /* 非左对齐时，在字符前补空格。 */
         if (!(flags & FLAGS_LEFT)) {
           while (l++ < width) {
             putchar_via_gadget(output, ' ');
           }
         }
-        // char output
+        /* char 经可变参数整数提升，按 int 取出再转换。 */
         putchar_via_gadget(output, (char) va_arg(args, int) );
-        // post padding
+        /* 左对齐时，在字符后补空格。 */
         if (flags & FLAGS_LEFT) {
           while (l++ < width) {
             putchar_via_gadget(output, ' ');
@@ -1250,7 +1251,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         }
         else {
           printf_size_t l = strnlen_s_(p, precision ? precision : PRINTF_MAX_POSSIBLE_BUFFER_SIZE);
-          // pre padding
+          /* 精度限制字符串最大输出长度；右对齐先补空格。 */
           if (flags & FLAGS_PRECISION) {
             l = (l < precision ? l : precision);
           }
@@ -1259,12 +1260,12 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
               putchar_via_gadget(output, ' ');
             }
           }
-          // string output
+          /* 输出至 '\0' 或精度耗尽，二者先到者为止。 */
           while ((*p != 0) && (!(flags & FLAGS_PRECISION) || precision)) {
             putchar_via_gadget(output, *(p++));
             --precision;
           }
-          // post padding
+          /* 左对齐在字符串之后补齐字段宽度。 */
           if (flags & FLAGS_LEFT) {
             while (l++ < width) {
               putchar_via_gadget(output, ' ');
@@ -1276,7 +1277,7 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
       }
 
       case 'p' : {
-        width = sizeof(void*) * 2U + 2; // 2 hex chars per byte + the "0x" prefix
+        width = sizeof(void*) * 2U + 2; /* 每字节两位十六进制，再加 `0x` 前缀。 */
         flags |= FLAGS_ZEROPAD | FLAGS_POINTER;
         uintptr_t value = (uintptr_t)va_arg(args, void*);
         (value == (uintptr_t) NULL) ?
@@ -1291,9 +1292,10 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         format++;
         break;
 
-      // Many people prefer to disable support for %n, as it lets the caller
-      // engineer a write to an arbitrary location, of a value the caller
-      // effectively controls - which could be a security concern in some cases.
+      /*
+       * %n 会把当前逻辑输出长度写入参数指针。若格式串来自不可信输入，这相当于可控
+       * 的内存写操作，存在安全风险，因此允许通过配置完全禁用。
+       */
 #ifdef RT_KLIBC_USING_VSNPRINTF_WRITEBACK_SPECIFIER
       case 'n' : {
         if       (flags & FLAGS_CHAR)      *(va_arg(args, char*))      = (char) output->pos;
@@ -1301,12 +1303,12 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
         else if  (flags & FLAGS_LONG)      *(va_arg(args, long*))      = (long) output->pos;
 #ifdef RT_KLIBC_USING_VSNPRINTF_LONGLONG
         else if  (flags & FLAGS_LONG_LONG) *(va_arg(args, long long*)) = (long long int) output->pos;
-#endif // RT_KLIBC_USING_VSNPRINTF_LONGLONG
+#endif /* RT_KLIBC_USING_VSNPRINTF_LONGLONG */
         else                               *(va_arg(args, int*))       = (int) output->pos;
         format++;
         break;
       }
-#endif // RT_KLIBC_USING_VSNPRINTF_WRITEBACK_SPECIFIER
+#endif /* RT_KLIBC_USING_VSNPRINTF_WRITEBACK_SPECIFIER */
 
       default :
         putchar_via_gadget(output, *format);
@@ -1316,34 +1318,42 @@ static inline void format_string_loop(output_gadget_t* output, const char* forma
   }
 }
 
-// internal vsnprintf - used for implementing _all library functions
+/*
+ * 公共格式化核心：运行格式串循环、为缓冲区模式追加终止符，并返回不含终止符的
+ * 完整逻辑长度。内部通常以 pos=0 调用，也允许从非零 pos 继续补救式输出。
+ */
 static int vsnprintf_impl(output_gadget_t* output, const char* format, va_list args)
 {
-  // Note: The library only calls vsnprintf_impl() with output->pos being 0. However, it is
-  // possible to call this function with a non-zero pos value for some "remedial printing".
+  /* 本文件入口以 pos=0 调用；设计上也支持已累计一部分位置的输出器。 */
   format_string_loop(output, format, args);
 
-  // termination
+  /* 仅缓冲区输出器需要写字符串终止符；回调和计数模式跳过。 */
   append_termination_with_gadget(output);
 
-  // return written chars without terminating \0
+  /* 返回值不计结尾 '\0'，且包含因容量不足而未真正写入的字符。 */
   return (int)output->pos;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 /**
- * @brief  This function will fill a formatted string to buffer.
+ * @brief 按格式串和 va_list 生成有容量上限的字符串。
  *
- * @param  buf is the buffer to save formatted string.
+ * @param buf 输出缓冲区；size 为 0 时可以为空，仅计算所需长度。
  *
- * @param  size is the size of buffer.
+ * @param size 缓冲区总容量，包含结尾 '\0' 的位置。
  *
- * @param  fmt is the format parameters.
+ * @param fmt 以 '\0' 结尾的 printf 风格格式串。
  *
- * @param  args is a list of variable parameters.
+ * @param args 与格式说明符类型和顺序匹配的可变参数列表。
  *
- * @return The number of characters actually written to buffer.
+ * @return 完整结果本应具有的字符数，不含结尾 '\0'；不等同于实际写入数。
+ *         若返回值大于或等于 size，表示结果发生截断。
+ *
+ * @note size 大于 0 且 buf 非空时，函数在可写范围内保证 '\0' 结尾。实现不分配
+ *       动态内存，但浮点和整数转换会使用固定大小栈数组。
+ * @warning fmt 与 args 不匹配属于未定义用法；启用 `%n` 时，不可信格式串还能触发
+ *          写内存。返回值内部按 int 范围设计，超大 size 会饱和到 INT_MAX。
  */
 int rt_vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {

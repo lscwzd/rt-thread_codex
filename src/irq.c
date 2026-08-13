@@ -15,6 +15,16 @@
  * 2023-09-15     xqyjlj       perf rt_hw_interrupt_disable/enable
  * 2024-01-05     Shell        Fixup of data racing in rt_interrupt_get_nest
  * 2024-01-03     Shell        Support for interrupt context
+*/
+
+/**
+ * @file irq.c
+ * @brief 维护中断嵌套层数、中断上下文链以及中断进入/离开钩子。
+ *
+ * BSP/架构的中断汇编入口在调用具体 ISR 前应调用 rt_interrupt_enter()，返回前调用
+ * rt_interrupt_leave()。嵌套计数让内核区分普通线程上下文与一层或多层中断上下文，
+ * 从而把需要的调度延后到最外层中断退出。UP 使用单个全局计数，SMP 则每个 CPU
+ * 独立维护 irq_nest，避免一个 CPU 的中断影响另一个 CPU 的上下文判断。
  */
 
 #include <rthw.h>
@@ -32,11 +42,13 @@ void (*rt_interrupt_leave_hook)(void);
 /**
  * @ingroup group_hook
  *
- * @brief This function set a hook function when the system enter a interrupt
+ * @brief 设置中断进入钩子。
  *
- * @note The hook function must be simple and never be blocked or suspend.
+ * 钩子在 rt_interrupt_enter() 已递增嵌套层数之后调用，处于 ISR 上下文，可以通过
+ * rt_interrupt_get_nest() 观察当前层数。它可能在每一层嵌套中断触发，必须短小、
+ * 可重入，不能阻塞、挂起或调用只允许在线程上下文使用的 API。
  *
- * @param hook the function point to be called
+ * @param hook 回调函数；RT_NULL 表示取消。再次设置会覆盖旧回调。
  */
 void rt_interrupt_enter_sethook(void (*hook)(void))
 {
@@ -46,11 +58,12 @@ void rt_interrupt_enter_sethook(void (*hook)(void))
 /**
  * @ingroup group_hook
  *
- * @brief This function set a hook function when the system exit a interrupt.
+ * @brief 设置中断离开钩子。
  *
- * @note The hook function must be simple and never be blocked or suspend.
+ * 钩子在嵌套层数递减之前调用，所以它看到的仍是当前中断层数。与进入钩子一样，
+ * 它运行在 ISR 退出路径，必须短小、不可阻塞，并注意嵌套中断带来的可重入性。
  *
- * @param hook the function point to be called
+ * @param hook 回调函数；RT_NULL 表示取消。再次设置会覆盖旧回调。
  */
 void rt_interrupt_leave_sethook(void (*hook)(void))
 {
@@ -65,35 +78,43 @@ void rt_interrupt_leave_sethook(void (*hook)(void))
 /**@{*/
 
 #ifdef RT_USING_SMP
+/* SMP 的中断嵌套是 per-CPU 数据。 */
 #define rt_interrupt_nest rt_cpu_self()->irq_nest
 #else
+/* UP 只有一个执行 CPU；原子类型保证读取与中断更新之间不会出现撕裂。 */
 volatile rt_atomic_t rt_interrupt_nest = 0;
 #endif /* RT_USING_SMP */
 
 #ifdef ARCH_USING_IRQ_CTX_LIST
 void rt_interrupt_context_push(rt_interrupt_context_t this_ctx)
 {
+    /* 嵌套中断把最新上下文压到单链表头，形成按进入顺序反向排列的栈。 */
     struct rt_cpu *this_cpu = rt_cpu_self();
     rt_slist_insert(&this_cpu->irq_ctx_head, &this_ctx->node);
 }
 
 void rt_interrupt_context_pop(void)
 {
+    /* 最外层返回前弹出当前上下文，使上一级中断重新成为链表首项。 */
     struct rt_cpu *this_cpu = rt_cpu_self();
     rt_slist_pop(&this_cpu->irq_ctx_head);
 }
 
 void *rt_interrupt_context_get(void)
 {
+    /* 返回当前最内层中断由架构保存的上下文地址。 */
     struct rt_cpu *this_cpu = rt_cpu_self();
     return rt_slist_first_entry(&this_cpu->irq_ctx_head, struct rt_interrupt_context, node)->context;
 }
 #endif /* ARCH_USING_IRQ_CTX_LIST */
 
 /**
- * @brief This function will be invoked by BSP, when enter interrupt service routine
+ * @brief 标记当前 CPU 进入一层中断服务程序。
  *
- * @note Please don't invoke this routine in application
+ * 先原子增加嵌套层数，再调用进入钩子，所以钩子能看到非零层数。该弱实现允许架构
+ * 在保持同等语义的前提下覆盖。每次调用都必须在同一路径最终配对一次 leave。
+ *
+ * @note 仅供 BSP/架构中断入口调用，应用代码不得伪造中断上下文。
  *
  * @see rt_interrupt_leave
  */
@@ -108,9 +129,12 @@ RTM_EXPORT(rt_interrupt_enter);
 
 
 /**
- * @brief This function will be invoked by BSP, when leave interrupt service routine
+ * @brief 标记当前 CPU 离开一层中断服务程序。
  *
- * @note Please don't invoke this routine in application
+ * 离开钩子在计数递减前触发；随后嵌套层数减一。外层架构退出路径会依据最终层数和
+ * 调度请求决定是否执行中断后的线程切换。
+ *
+ * @note 仅供 BSP/架构中断出口调用，且必须与 enter 严格配对。
  *
  * @see rt_interrupt_enter
  */
@@ -126,12 +150,12 @@ RTM_EXPORT(rt_interrupt_leave);
 
 
 /**
- * @brief This function will return the nest of interrupt.
+ * @brief 返回当前 CPU 的中断嵌套层数。
  *
- * User application can invoke this function to get whether current
- * context is interrupt context.
+ * 读取期间短暂关闭本地中断，避免本 CPU 在取值时又进入/退出一层中断。返回 0
+ * 表示线程上下文，非 0 表示 ISR 上下文；数值本身表示当前嵌套深度。
  *
- * @return the number of nested interrupts.
+ * @return 当前中断嵌套层数。
  */
 rt_weak rt_uint8_t rt_interrupt_get_nest(void)
 {
@@ -150,8 +174,8 @@ RTM_EXPORT(rt_hw_interrupt_enable);
 
 rt_weak rt_bool_t rt_hw_interrupt_is_disabled(void)
 {
+    /* 通用弱占位无法查询架构状态；需要准确结果的 BSP 应提供强实现覆盖。 */
     return RT_FALSE;
 }
 RTM_EXPORT(rt_hw_interrupt_is_disabled);
 /**@}*/
-

@@ -3,15 +3,14 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  *
- * Change Logs:
- * Date           Author       Notes
- * 2008-7-12      Bernard      the first version
- * 2010-06-09     Bernard      fix the end stub of heap
- *                             fix memory check in rt_realloc function
- * 2010-07-13     Bernard      fix RT_ALIGN issue found by kuronca
- * 2010-10-14     Bernard      fix rt_realloc issue when realloc a NULL pointer.
- * 2017-07-14     armink       fix rt_realloc issue when new size is 0
- * 2018-10-02     Bernard      Add 64bit support
+ * 修改记录：
+ * 日期           作者         说明
+ * 2008-7-12      Bernard      首个版本
+ * 2010-06-09     Bernard      修复堆尾哨兵，并修正 rt_realloc 的内存检查
+ * 2010-07-13     Bernard      修复 kuronca 发现的 RT_ALIGN 问题
+ * 2010-10-14     Bernard      修复使用空指针调用 rt_realloc 的问题
+ * 2017-07-14     armink       修复新长度为 0 时的 rt_realloc 行为
+ * 2018-10-02     Bernard      增加 64 位支持
  */
 
 /*
@@ -47,6 +46,31 @@
  *
  */
 
+/**
+ * @file mem.c
+ * @brief 面向较小连续内存区的顺序首次适配分配器。
+ *
+ * 本文件实现 RT-Thread 的 small-memory 分配算法。初始化时，调用者给出一段
+ * 连续内存；分配器在这段内存的开头放置 `struct rt_small_mem` 管理对象，随后
+ * 把剩余空间组织成一条“按地址递增”的物理块链。每个块前面都有
+ * `struct rt_small_mem_item` 块头，`next` 和 `prev` 保存相对于 `heap_ptr` 的
+ * 偏移，因此不需要为链表指针另行分配内存。
+ *
+ * 初学者可以把内存布局理解为：
+ *
+ * @code
+ * [管理对象][块头 A][A 的用户区][块头 B][B 的用户区]...[结尾哨兵]
+ * @endcode
+ *
+ * 分配采用从 `lfree` 开始的首次适配搜索：找到第一个足够大的空闲块，能
+ * 安全留下“块头 + 最小用户区”时便拆分，否则整块交给调用者。释放时通过
+ * `plug_holes()` 与相邻空闲块合并，以抑制外部碎片。`lfree` 始终指向地址
+ * 最低的空闲块，因此后续搜索可以跳过其前方已知全部占用的区域。
+ *
+ * 本分配器自身不加锁；当它被选作系统堆时，`kservice.c` 的系统堆包装层
+ * 负责互斥。直接调用 rt_smem_* API 的使用者也必须自行串行化并发访问。
+ */
+
 #include <rthw.h>
 #include <rtthread.h>
 
@@ -58,34 +82,43 @@
 
 struct rt_small_mem_item
 {
-    rt_uintptr_t            pool_ptr;         /**< small memory object addr */
-    rt_size_t               next;             /**< next free item */
-    rt_size_t               prev;             /**< prev free item */
+    rt_uintptr_t            pool_ptr;         /**< 所属分配器地址；最低位同时编码“已使用”状态。 */
+    rt_size_t               next;             /**< 后一物理块块头相对 heap_ptr 的字节偏移。 */
+    rt_size_t               prev;             /**< 前一物理块块头相对 heap_ptr 的字节偏移。 */
 #ifdef RT_USING_MEMTRACE
 #ifdef ARCH_CPU_64BIT
-    rt_uint8_t              thread[8];       /**< thread name */
+    rt_uint8_t              thread[8];       /**< 截断保存的分配线程名，仅用于内存追踪。 */
 #else
-    rt_uint8_t              thread[4];       /**< thread name */
+    rt_uint8_t              thread[4];       /**< 截断保存的分配线程名，仅用于内存追踪。 */
 #endif /* ARCH_CPU_64BIT */
 #endif /* RT_USING_MEMTRACE */
 };
 
 /**
- * Base structure of small memory object
+ * @brief small-memory 分配器的运行时管理对象。
+ *
+ * 该对象本身放在调用者提供区域的最前端。`parent` 提供统一的内存统计与
+ * 内核对象头；其余字段描述真正可分配的块区域以及首次适配搜索起点。
  */
 struct rt_small_mem
 {
-    struct rt_memory            parent;                 /**< inherit from rt_memory */
-    rt_uint8_t                 *heap_ptr;               /**< pointer to the heap */
-    struct rt_small_mem_item   *heap_end;
-    struct rt_small_mem_item   *lfree;
-    rt_size_t                   mem_size_aligned;       /**< aligned memory size */
+    struct rt_memory            parent;                 /**< 通用内存对象与 total/used/max 统计。 */
+    rt_uint8_t                 *heap_ptr;               /**< 第一个块头的地址，也是偏移量计算基准。 */
+    struct rt_small_mem_item   *heap_end;               /**< 永久标记为已用的结尾哨兵，阻止越界合并。 */
+    struct rt_small_mem_item   *lfree;                  /**< 当前地址最低的空闲块；无空闲块时指向哨兵。 */
+    rt_size_t                   mem_size_aligned;       /**< 对齐后可供用户块使用的总字节数。 */
 };
 
+/* 一个最小空闲块必须能容纳这些基础元数据等价的用户空间。 */
 #define MIN_SIZE (sizeof(rt_uintptr_t) + sizeof(rt_size_t) + sizeof(rt_size_t))
 
+/* 清除最低状态位；所有对象地址都满足至少 2 字节对齐。 */
 #define MEM_MASK ((~(rt_size_t)0) - 1)
 
+/*
+ * `pool_ptr` 的最低位保存使用状态，其余位保存 `rt_small_mem` 地址。
+ * 这种“带标签指针”节省了单独的状态字段，但要求分配器对象地址已对齐。
+ */
 #define MEM_USED(_mem)       ((((rt_uintptr_t)(_mem)) & MEM_MASK) | 0x1)
 #define MEM_FREED(_mem)      ((((rt_uintptr_t)(_mem)) & MEM_MASK) | 0x0)
 #define MEM_ISUSED(_mem)   \
@@ -100,6 +133,12 @@ struct rt_small_mem
 #define SIZEOF_STRUCT_MEM    RT_ALIGN(sizeof(struct rt_small_mem_item), RT_ALIGN_SIZE)
 
 #ifdef RT_USING_MEMTRACE
+/**
+ * @brief 把分配者名称写入块头中的定长追踪字段。
+ *
+ * 名称过长时截断，过短时用空格补齐，因而该字段不保证以 NUL 结尾，只能按
+ * 固定宽度显示。调用者必须已经独占分配器元数据。
+ */
 rt_inline void rt_smem_setname(struct rt_small_mem_item *mem, const char *name)
 {
     int index;
@@ -121,6 +160,18 @@ rt_inline void rt_smem_setname(struct rt_small_mem_item *mem, const char *name)
 }
 #endif /* RT_USING_MEMTRACE */
 
+/**
+ * @brief 将刚释放的块与左右相邻空闲块合并。
+ *
+ * 物理块链按地址排列，所以只检查直接后继和直接前驱就能完成所有可能的
+ * 合并。函数先向高地址合并，再向低地址合并，并同步维护 `lfree`。被吞并
+ * 块的 `pool_ptr` 被清零，便于调试时识别过期块头。
+ *
+ * @param m   拥有该块的 small-memory 分配器。
+ * @param mem 已标记为空闲、且位于有效块区中的块头。
+ *
+ * @note 本函数不加锁，调用者必须保证分配器元数据不会被并发修改。
+ */
 static void plug_holes(struct rt_small_mem *m, struct rt_small_mem_item *mem)
 {
     struct rt_small_mem_item *nmem;
@@ -129,13 +180,12 @@ static void plug_holes(struct rt_small_mem *m, struct rt_small_mem_item *mem)
     RT_ASSERT((rt_uint8_t *)mem >= m->heap_ptr);
     RT_ASSERT((rt_uint8_t *)mem < (rt_uint8_t *)m->heap_end);
 
-    /* plug hole forward */
+    /* 先检查高地址一侧，避免保留两个连续空闲块。 */
     nmem = (struct rt_small_mem_item *)&m->heap_ptr[mem->next];
     if (mem != nmem && !MEM_ISUSED(nmem) &&
         (rt_uint8_t *)nmem != (rt_uint8_t *)m->heap_end)
     {
-        /* if mem->next is unused and not end of m->heap_ptr,
-         * combine mem and mem->next
+        /* 后继为空闲且不是结尾哨兵：让 mem 跨过 nmem，合并为一个大块。
          */
         if (m->lfree == nmem)
         {
@@ -146,11 +196,11 @@ static void plug_holes(struct rt_small_mem *m, struct rt_small_mem_item *mem)
         ((struct rt_small_mem_item *)&m->heap_ptr[nmem->next])->prev = (rt_uint8_t *)mem - m->heap_ptr;
     }
 
-    /* plug hole backward */
+    /* 再检查低地址一侧；若可合并，最终保留前驱 pmem 的块头。 */
     pmem = (struct rt_small_mem_item *)&m->heap_ptr[mem->prev];
     if (pmem != mem && !MEM_ISUSED(pmem))
     {
-        /* if mem->prev is unused, combine mem and mem->prev */
+        /* 前驱为空闲：让 pmem 跨过 mem，并按需把 lfree 移到 pmem。 */
         if (m->lfree == mem)
         {
             m->lfree = pmem;
@@ -162,15 +212,20 @@ static void plug_holes(struct rt_small_mem *m, struct rt_small_mem_item *mem)
 }
 
 /**
- * @brief This function will initialize small memory management algorithm.
+ * @brief 在调用者提供的连续内存中建立 small-memory 分配器。
  *
- * @param name is the name of the small memory management object.
+ * @param name 内核对象名称，用于诊断和 FinSH 查询。
  *
- * @param begin_addr the beginning address of memory.
+ * @param begin_addr 原始内存区起始地址；函数会向上对齐实际管理对象和块区。
  *
- * @param size is the size of the memory.
+ * @param size 从 @p begin_addr 开始的总字节数，包含管理对象和块头开销。
  *
- * @return Return a pointer to the memory object. When the return value is RT_NULL, it means the init failed.
+ * @return 成功时返回嵌入的 `rt_memory` 对象；空间不足以放置管理对象、首块和
+ *         结尾哨兵时返回 RT_NULL。
+ *
+ * 初始化后的块链只有一个大空闲块和一个已用结尾哨兵。对象由
+ * rt_object_init() 注册，因此销毁时应调用 rt_smem_detach()，而不是释放
+ * 这段调用者提供的内存。
  */
 rt_smem_t rt_smem_init(const char    *name,
                      void          *begin_addr,
@@ -185,11 +240,11 @@ rt_smem_t rt_smem_init(const char    *name,
     begin_align = RT_ALIGN((rt_uintptr_t)start_addr, RT_ALIGN_SIZE);
     end_align   = RT_ALIGN_DOWN((rt_uintptr_t)begin_addr + size, RT_ALIGN_SIZE);
 
-    /* alignment addr */
+    /* 对齐边界，并确认至少能够放下两个块头（首块与结尾哨兵）。 */
     if ((end_align > (2 * SIZEOF_STRUCT_MEM)) &&
         ((end_align - 2 * SIZEOF_STRUCT_MEM) >= start_addr))
     {
-        /* calculate the aligned memory size */
+        /* 扣除结尾所需块头后，计算对齐的用户块区域长度。 */
         mem_size = end_align - begin_align - 2 * SIZEOF_STRUCT_MEM;
     }
     else
@@ -201,20 +256,20 @@ rt_smem_t rt_smem_init(const char    *name,
     }
 
     rt_memset(small_mem, 0, sizeof(*small_mem));
-    /* initialize small memory object */
+    /* 初始化通用对象头和统计信息；此时 used/max 均由清零得到。 */
     rt_object_init(&(small_mem->parent.parent), RT_Object_Class_Memory, name);
     small_mem->parent.algorithm = "small";
     small_mem->parent.address = begin_align;
     small_mem->parent.total = mem_size;
     small_mem->mem_size_aligned = mem_size;
 
-    /* point to begin address of heap */
+    /* heap_ptr 是所有 next/prev 偏移的统一基准。 */
     small_mem->heap_ptr = (rt_uint8_t *)begin_align;
 
     LOG_D("mem init, heap begin address 0x%x, size %d",
             (rt_uintptr_t)small_mem->heap_ptr, small_mem->mem_size_aligned);
 
-    /* initialize the start of the heap */
+    /* 建立覆盖全部可用空间的第一个空闲块。 */
     mem        = (struct rt_small_mem_item *)small_mem->heap_ptr;
     mem->pool_ptr = MEM_FREED(small_mem);
     mem->next  = small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM;
@@ -223,7 +278,7 @@ rt_smem_t rt_smem_init(const char    *name,
     rt_smem_setname(mem, "INIT");
 #endif /* RT_USING_MEMTRACE */
 
-    /* initialize the end of the heap */
+    /* 建立零长度、永久“已使用”的尾哨兵，阻止合并越过内存区末端。 */
     small_mem->heap_end        = (struct rt_small_mem_item *)&small_mem->heap_ptr[mem->next];
     small_mem->heap_end->pool_ptr = MEM_USED(small_mem);
     small_mem->heap_end->next  = small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM;
@@ -232,7 +287,7 @@ rt_smem_t rt_smem_init(const char    *name,
     rt_smem_setname(small_mem->heap_end, "INIT");
 #endif /* RT_USING_MEMTRACE */
 
-    /* initialize the lowest-free pointer to the start of the heap */
+    /* 此时唯一的空闲块也自然是最低地址空闲块。 */
     small_mem->lfree = (struct rt_small_mem_item *)small_mem->heap_ptr;
 
     return &small_mem->parent;
@@ -240,11 +295,14 @@ rt_smem_t rt_smem_init(const char    *name,
 RTM_EXPORT(rt_smem_init);
 
 /**
- * @brief This function will remove a small mem from the system.
+ * @brief 从内核对象系统中注销一个静态 small-memory 分配器。
  *
- * @param m the small memory management object.
+ * @param m 由 rt_smem_init() 返回的对象。
  *
- * @return RT_EOK
+ * @return 始终返回 RT_EOK；参数和对象类型错误通过断言报告。
+ *
+ * @warning 本函数不会检查仍未释放的用户块，也不会释放调用者提供的内存；
+ *          调用者必须先停止所有访问并自行管理底层区域生命周期。
  */
 rt_err_t rt_smem_detach(rt_smem_t m)
 {
@@ -265,13 +323,17 @@ RTM_EXPORT(rt_smem_detach);
 /**@{*/
 
 /**
- * @brief Allocate a block of memory with a minimum of 'size' bytes.
+ * @brief 从指定 small-memory 分配器中分配至少 @p size 字节。
  *
- * @param m the small memory management object.
+ * @param m small-memory 分配器对象。
  *
- * @param size is the minimum size of the requested block in bytes.
+ * @param size 请求的最小用户区字节数；0 直接返回 RT_NULL。
  *
- * @return the pointer to allocated memory or NULL if no free memory was found.
+ * @return 成功时返回对齐后的用户区首地址；找不到足够大的连续块时返回 RT_NULL。
+ *
+ * 搜索从 `lfree` 开始沿物理块链向高地址进行。若剩余空间足以容纳一个新块
+ * 头和最小用户区，则拆出空闲余块；否则把整个候选块分配出去，从而避免制造
+ * 永远无法使用的微小碎片。返回指针之后，调用者看不到其前方块头。
  */
 void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
 {
@@ -287,10 +349,10 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
     RT_ASSERT(rt_object_is_systemobject(&m->parent));
 
     small_mem = (struct rt_small_mem *)m;
-    /* alignment size */
+    /* 所有用户指针和后继块头都必须满足 RT_ALIGN_SIZE。 */
     size = RT_ALIGN(size, RT_ALIGN_SIZE);
 
-    /* every data block must be at least MIN_SIZE_ALIGNED long */
+    /* 即使请求很小，也扩大到可以在未来作为有效空闲块管理的最小长度。 */
     if (size < MIN_SIZE_ALIGNED)
         size = MIN_SIZE_ALIGNED;
 
@@ -309,25 +371,19 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
 
         if ((!MEM_ISUSED(mem)) && (mem->next - (ptr + SIZEOF_STRUCT_MEM)) >= size)
         {
-            /* mem is not used and at least perfect fit is possible:
-             * mem->next - (ptr + SIZEOF_STRUCT_MEM) gives us the 'user data size' of mem */
+            /* 当前块空闲且用户区足够大；表达式计算的是不含块头的净容量。 */
 
             if (mem->next - (ptr + SIZEOF_STRUCT_MEM) >=
                 (size + SIZEOF_STRUCT_MEM + MIN_SIZE_ALIGNED))
             {
-                /* (in addition to the above, we test if another struct rt_small_mem_item (SIZEOF_STRUCT_MEM) containing
-                 * at least MIN_SIZE_ALIGNED of data also fits in the 'user data space' of 'mem')
-                 * -> split large block, create empty remainder,
-                 * remainder must be large enough to contain MIN_SIZE_ALIGNED data: if
-                 * mem->next - (ptr + (2*SIZEOF_STRUCT_MEM)) == size,
-                 * struct rt_small_mem_item would fit in but no data between mem2 and mem2->next
-                 * @todo we could leave out MIN_SIZE_ALIGNED. We would create an empty
-                 *       region that couldn't hold data, but when mem->next gets freed,
-                 *       the 2 regions would be combined, resulting in more free memory
+                /*
+                 * 余量可以同时容纳新块头和最小用户区，因此拆分：前半块满足本次
+                 * 请求，后半块 mem2 保持空闲。若只够放块头却没有可用数据，创建
+                 * mem2 只会产生不可分配碎片，所以这里要求额外的 MIN_SIZE_ALIGNED。
                  */
                 ptr2 = ptr + SIZEOF_STRUCT_MEM + size;
 
-                /* create mem2 struct */
+                /* 在已分配用户区之后原地构造余块块头。 */
                 mem2       = (struct rt_small_mem_item *)&small_mem->heap_ptr[ptr2];
                 mem2->pool_ptr = MEM_FREED(small_mem);
                 mem2->next = mem->next;
@@ -336,7 +392,7 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
                 rt_smem_setname(mem2, "    ");
 #endif /* RT_USING_MEMTRACE */
 
-                /* and insert it between mem and mem->next */
+                /* 把余块插入物理块链，并修正原后继的反向偏移。 */
                 mem->next = ptr2;
 
                 if (mem2->next != small_mem->mem_size_aligned + SIZEOF_STRUCT_MEM)
@@ -349,18 +405,16 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
             }
             else
             {
-                /* (a mem2 struct does no fit into the user data space of mem and mem->next will always
-                 * be used at this point: if not we have 2 unused structs in a row, plug_holes should have
-                 * take care of this).
-                 * -> near fit or excact fit: do not split, no mem2 creation
-                 * also can't move mem->next directly behind mem, since mem->next
-                 * will always be used at this point!
+                /*
+                 * 近似匹配或完全匹配：余量不足以形成有效新块，因而整块分配。
+                 * 当前块后继必为已用块，否则释放路径的 plug_holes() 本应早已把
+                 * 两个连续空闲块合并。
                  */
                 small_mem->parent.used += mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr);
                 if (small_mem->parent.max < small_mem->parent.used)
                     small_mem->parent.max = small_mem->parent.used;
             }
-            /* set small memory object */
+            /* 标记块为已用；同一个字段仍保留所属分配器地址。 */
             mem->pool_ptr = MEM_USED(small_mem);
 #ifdef RT_USING_MEMTRACE
             if (rt_thread_self())
@@ -371,7 +425,7 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
 
             if (mem == small_mem->lfree)
             {
-                /* Find next free block after mem and update lowest free pointer */
+                /* 原最低空闲块已被使用，向后寻找新的最低空闲块。 */
                 while (MEM_ISUSED(small_mem->lfree) && small_mem->lfree != small_mem->heap_end)
                     small_mem->lfree = (struct rt_small_mem_item *)&small_mem->heap_ptr[small_mem->lfree->next];
 
@@ -385,7 +439,7 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
                     (rt_uintptr_t)((rt_uint8_t *)mem + SIZEOF_STRUCT_MEM),
                     (rt_uintptr_t)(mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr)));
 
-            /* return the memory data except mem struct */
+            /* 跳过内部块头，只把用户区交给调用者。 */
             return (rt_uint8_t *)mem + SIZEOF_STRUCT_MEM;
         }
     }
@@ -395,15 +449,19 @@ void *rt_smem_alloc(rt_smem_t m, rt_size_t size)
 RTM_EXPORT(rt_smem_alloc);
 
 /**
- * @brief This function will change the size of previously allocated memory block.
+ * @brief 调整已分配块的大小，并尽量保留原地址。
  *
- * @param m the small memory management object.
+ * @param m small-memory 分配器对象。
  *
- * @param rmem is the pointer to memory allocated by rt_mem_alloc.
+ * @param rmem 由同一分配器返回的用户指针；RT_NULL 等价于新分配。
  *
- * @param newsize is the required new size.
+ * @param newsize 期望的新用户区长度；对齐后为 0 时释放原块。
  *
- * @return the changed memory block address.
+ * @return 成功时返回调整后的地址；扩大且无法获得新块时返回 RT_NULL，此时
+ *         原块仍保持有效、内容不变。
+ *
+ * 缩小时若尾部足够形成一个合法空闲块，函数会原地拆分并立即与邻块合并；
+ * 扩大时当前实现不会直接吞并右侧空闲块，而是执行“另行分配—复制—释放”。
  */
 void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
 {
@@ -418,7 +476,7 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
     RT_ASSERT(rt_object_is_systemobject(&m->parent));
 
     small_mem = (struct rt_small_mem *)m;
-    /* alignment size */
+    /* 与普通分配保持相同的地址和块长对齐规则。 */
     newsize = RT_ALIGN(newsize, RT_ALIGN_SIZE);
     if (newsize > small_mem->mem_size_aligned)
     {
@@ -432,7 +490,7 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
         return RT_NULL;
     }
 
-    /* allocate a new memory block */
+    /* C realloc 兼容语义：空旧指针等价于 alloc。 */
     if (rmem == RT_NULL)
         return rt_smem_alloc(&small_mem->parent, newsize);
 
@@ -442,18 +500,18 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
 
     mem = (struct rt_small_mem_item *)((rt_uint8_t *)rmem - SIZEOF_STRUCT_MEM);
 
-    /* current memory block size */
+    /* 通过当前块头和后继偏移还原旧用户区长度。 */
     ptr = (rt_uint8_t *)mem - small_mem->heap_ptr;
     size = mem->next - ptr - SIZEOF_STRUCT_MEM;
     if (size == newsize)
     {
-        /* the size is the same as */
+        /* 长度完全相同，不移动也不复制。 */
         return rmem;
     }
 
     if (newsize + SIZEOF_STRUCT_MEM + MIN_SIZE < size)
     {
-        /* split memory block */
+        /* 原地缩小：从尾部拆出一个新的空闲块。 */
         small_mem->parent.used -= (size - newsize);
 
         ptr2 = ptr + SIZEOF_STRUCT_MEM + newsize;
@@ -472,7 +530,7 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
 
         if (mem2 < small_mem->lfree)
         {
-            /* the splited struct is now the lowest */
+            /* 新余块比原 lfree 更靠前，更新搜索起点。 */
             small_mem->lfree = mem2;
         }
 
@@ -481,9 +539,9 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
         return rmem;
     }
 
-    /* expand memory */
+    /* 扩大或无法有效拆分时，申请新块并复制旧内容。 */
     nmem = rt_smem_alloc(&small_mem->parent, newsize);
-    if (nmem != RT_NULL) /* check memory */
+    if (nmem != RT_NULL) /* 只有新分配成功后才释放旧块，保证失败安全。 */
     {
         rt_memcpy(nmem, rmem, size < newsize ? size : newsize);
         rt_smem_free(rmem);
@@ -494,10 +552,13 @@ void *rt_smem_realloc(rt_smem_t m, void *rmem, rt_size_t newsize)
 RTM_EXPORT(rt_smem_realloc);
 
 /**
- * @brief This function will release the previously allocated memory block by
- *        rt_mem_alloc. The released memory block is taken back to system heap.
+ * @brief 释放一个 small-memory 用户块并合并相邻空闲空间。
  *
- * @param rmem the address of memory which will be released.
+ * @param rmem 先前由 rt_smem_alloc()/rt_smem_realloc() 返回的地址；RT_NULL
+ *             被静默忽略。
+ *
+ * 块头中的带标签所属指针让函数无需额外传入分配器对象。重复释放、跨分配器
+ * 指针和越界指针均属于调用错误；调试构建会尽可能通过断言发现它们。
  */
 void rt_smem_free(void *rmem)
 {
@@ -509,9 +570,9 @@ void rt_smem_free(void *rmem)
 
     RT_ASSERT((((rt_uintptr_t)rmem) & (RT_ALIGN_SIZE - 1)) == 0);
 
-    /* Get the corresponding struct rt_small_mem_item ... */
+    /* 用户地址前方固定放置块头，先退回块头位置。 */
     mem = (struct rt_small_mem_item *)((rt_uint8_t *)rmem - SIZEOF_STRUCT_MEM);
-    /* ... which has to be in a used state ... */
+    /* 从带标签指针恢复所属分配器，并验证该块当前确实为已用状态。 */
     small_mem = MEM_POOL(mem);
     RT_ASSERT(small_mem != RT_NULL);
     RT_ASSERT(MEM_ISUSED(mem));
@@ -525,7 +586,7 @@ void rt_smem_free(void *rmem)
             (rt_uintptr_t)rmem,
             (rt_uintptr_t)(mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr)));
 
-    /* ... and is now unused. */
+    /* 清除最低状态位，把该块转换为空闲状态。 */
     mem->pool_ptr = MEM_FREED(small_mem);
 #ifdef RT_USING_MEMTRACE
     rt_smem_setname(mem, "    ");
@@ -533,13 +594,13 @@ void rt_smem_free(void *rmem)
 
     if (mem < small_mem->lfree)
     {
-        /* the newly freed struct is now the lowest */
+        /* 新释放块地址更低，因此成为下一次首次适配搜索起点。 */
         small_mem->lfree = mem;
     }
 
     small_mem->parent.used -= (mem->next - ((rt_uint8_t *)mem - small_mem->heap_ptr));
 
-    /* finally, see if prev or next are free also */
+    /* 最后与可合并的直接邻块合并，恢复“不相邻空闲块”的不变量。 */
     plug_holes(small_mem, mem);
 }
 RTM_EXPORT(rt_smem_free);
@@ -561,26 +622,26 @@ static int memcheck(int argc, char *argv[])
 
     name = argc > 1 ? argv[1] : RT_NULL;
     level = rt_hw_interrupt_disable();
-    /* get mem object */
+    /* 关闭本地中断，避免检查期间系统堆元数据发生变化。 */
     information = rt_object_get_information(RT_Object_Class_Memory);
     for (node = information->object_list.next;
          node != &(information->object_list);
          node  = node->next)
     {
         object = rt_list_entry(node, struct rt_object, list);
-        /* find the specified object */
+        /* 如果给出了名称，只检查匹配的内存对象。 */
         if (name != RT_NULL && rt_strncmp(name, object->name, RT_NAME_MAX) != 0)
         {
             continue;
         }
-        /* mem object */
+        /* 同一对象类还可能包含其他算法，只处理 algorithm == "small"。 */
         m = (struct rt_small_mem *)object;
         if(rt_strncmp(m->parent.algorithm, "small", RT_NAME_MAX) != 0)
         {
             continue;
         }
 
-        /* check mem */
+        /* 沿物理块链检查偏移范围和每个块记录的所属分配器。 */
         for (mem = (struct rt_small_mem_item *)m->heap_ptr; mem != m->heap_end; mem = (struct rt_small_mem_item *)&m->heap_ptr[mem->next])
         {
             position = (rt_uintptr_t)mem - (rt_uintptr_t)m->heap_ptr;
@@ -614,25 +675,25 @@ static int memtrace(int argc, char **argv)
     char *name;
 
     name = argc > 1 ? argv[1] : RT_NULL;
-    /* get mem object */
+    /* 遍历全局 Memory 对象表，可通过可选名称筛选。 */
     information = rt_object_get_information(RT_Object_Class_Memory);
     for (node = information->object_list.next;
          node != &(information->object_list);
          node  = node->next)
     {
         object = rt_list_entry(node, struct rt_object, list);
-        /* find the specified object */
+        /* 跳过名称不匹配的对象。 */
         if (name != RT_NULL && rt_strncmp(name, object->name, RT_NAME_MAX) != 0)
         {
             continue;
         }
-        /* mem object */
+        /* 跳过不是 small-memory 算法的内存对象。 */
         m = (struct rt_small_mem *)object;
         if(rt_strncmp(m->parent.algorithm, "small", RT_NAME_MAX) != 0)
         {
             continue;
         }
-        /* show memory information */
+        /* 先打印总体统计和关键指针，再逐块显示长度及分配者缩写。 */
         rt_kprintf("\nmemory heap address:\n");
         rt_kprintf("name    : %s\n", m->parent.parent.name);
         rt_kprintf("total   : %d\n", m->parent.total);
